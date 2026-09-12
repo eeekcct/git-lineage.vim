@@ -1,0 +1,24 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  vim:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vim
+        run: sudo apt-get update && sudo apt-get install -y vim
+      - name: Run regression tests
+        run: vim -Nu NONE -i NONE -n -es -S test/run.vim
+      - name: Show test failures
+        if: failure()
+        run: cat test-errors.log 2>/dev/null || true
+      - name: Check whitespace
+        run: git show --format= --check HEAD

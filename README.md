@@ -9,7 +9,7 @@ and associated pull request when available.
 ## Requirements
 
 - Vim 9.0 or later with `+vim9script` and `+popupwin` (Neovim is not supported).
-- `git` on your `PATH`.
+- [Git](https://git-scm.com/) on your `PATH`.
 - Optional: [GitHub CLI (`gh`)](https://cli.github.com/) on your `PATH`,
   to look up and open pull requests.
 
@@ -23,7 +23,7 @@ for details.
 With Vim's built-in packages, clone into a `pack/*/start/` directory:
 
 ```sh
-git clone git@github.com:eeekcct/git-lineage.vim.git ~/.vim/pack/plugins/start/git-lineage.vim
+git clone https://github.com/eeekcct/git-lineage.vim.git ~/.vim/pack/plugins/start/git-lineage.vim
 ```
 
 On Windows, use `~/vimfiles/pack/plugins/start/git-lineage.vim` instead.

@@ -84,7 +84,6 @@ vim -Nu NONE -i NONE -n -es -S test/run.vim
 
 Tests create temporary Git repositories and a fake `gh` command. They do not
 access GitHub or launch a browser. Failures are written to `test-errors.log`.
-See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 ## License
 

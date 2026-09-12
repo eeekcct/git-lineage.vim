@@ -11,11 +11,18 @@ and associated pull request when available.
 - Vim 9.0 or later with `+vim9script` and `+popupwin` (Neovim is not supported).
 - `git` on your `PATH`.
 - Optional: [GitHub CLI (`gh`)](https://cli.github.com/) on your `PATH`,
-  authenticated with `gh auth login`, for PR lookup and opening PRs.
+  with authentication configured for the target repository, to look up and
+  open pull requests.
 
-Commit information works without `gh`. Private repositories require a GitHub
-account with access. For GitHub Enterprise, authenticate using
-`gh auth login --hostname YOUR_HOST`.
+Commit information works without `gh`.
+
+Authentication is handled by `gh`. You can use `gh auth login` or environment
+variables such as `GH_TOKEN` / `GITHUB_TOKEN`. For GitHub Enterprise Server,
+use `gh auth login --hostname YOUR_HOST` or `GH_ENTERPRISE_TOKEN` /
+`GITHUB_ENTERPRISE_TOKEN`. The credentials must grant access to the target
+repository, and environment variables must be available to the Vim process.
+See the [GitHub CLI authentication documentation](https://cli.github.com/manual/gh_auth_login)
+and [environment variables](https://cli.github.com/manual/gh_help_environment).
 
 ## Installation
 

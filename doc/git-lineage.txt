@@ -1,0 +1,106 @@
+*git-lineage.txt*  Show the Git commit and GitHub PR behind the current line
+
+Author: eeekcct
+License: MIT
+
+==============================================================================
+CONTENTS                                                   *git-lineage*
+
+    Requirements ................ |git-lineage-requirements|
+    Usage ....................... |git-lineage-usage|
+    Mappings .................... |git-lineage-mappings|
+    Highlights .................. |git-lineage-highlights|
+    Behavior .................... |git-lineage-behavior|
+
+==============================================================================
+REQUIREMENTS                                  *git-lineage-requirements*
+
+Vim 9.0 or later with +vim9script and +popupwin, and git on PATH.
+Neovim is not supported.
+
+GitHub CLI (gh) is optional. To look up and open pull requests, gh must be on
+PATH with authentication configured for the target repository. Commit
+information works without gh.
+
+Authentication is handled by gh. You can use "gh auth login" or environment
+variables such as GH_TOKEN / GITHUB_TOKEN. For GitHub Enterprise Server, use
+"gh auth login --hostname YOUR_HOST" or GH_ENTERPRISE_TOKEN /
+GITHUB_ENTERPRISE_TOKEN. The credentials must grant access to the target
+repository, and environment variables must be available to the Vim process.
+See:
+    https://cli.github.com/manual/gh_auth_login
+    https://cli.github.com/manual/gh_help_environment
+
+==============================================================================
+USAGE                                                *git-lineage-usage*
+
+                                                          *:GitLineage*
+:GitLineage             Show the commit for the line under the cursor.
+                        Include the associated GitHub PR when available.
+
+The popup contains the abbreviated commit hash, author, author date, and
+commit subject. When a PR is found, its number, title, and URL are added.
+
+While the popup is visible in Normal mode:
+
+    o                   Open the displayed PR in the browser using gh.
+                        If no PR was found, do nothing.
+    q or <Esc>          Close the popup.
+
+Moving the cursor or clicking inside the popup also closes it. Repeating
+:GitLineage replaces the previous popup. Other keys retain their normal
+behavior; popup shortcuts are not active in Insert or Command-line mode.
+The popup normally opens above the cursor, with its left edge 10 screen columns
+to the right. Vim adjusts the position when it would go outside the screen.
+
+==============================================================================
+MAPPINGS                                          *git-lineage-mappings*
+
+                                                  *<Plug>(git-lineage)*
+<Plug>(git-lineage)      Invoke :GitLineage in Normal mode.
+
+No default user mapping is installed. Add a mapping to your vimrc, for example: >
+    nmap <silent> <Leader>gl <Plug>(git-lineage)
+<
+==============================================================================
+HIGHLIGHTS                                      *git-lineage-highlights*
+
+*GitLineagePopup*        Popup text. Linked to Normal by default.
+*GitLineageBorder*       Popup border. Linked to Comment by default.
+
+Override these groups in your colorscheme or a ColorScheme autocommand: >
+    augroup my_git_lineage_colors
+      autocmd!
+      autocmd ColorScheme * highlight link GitLineageBorder Special
+    augroup END
+    highlight link GitLineageBorder Special
+<
+==============================================================================
+BEHAVIOR                                          *git-lineage-behavior*
+
+The saved file on disk is passed to git blame. Save the file before running the
+command; unsaved insertions or deletions can make the cursor line refer to a
+different saved line. A newly added or changed line without a commit reports
+"Current line is not committed yet". Files must have committed Git history;
+untracked files and special buffers are not supported.
+
+The current branch's configured remote is used for PR lookup. If none is
+configured, or HEAD is detached, origin is used. Local tracking (remote ".")
+also falls back to origin. Supported remote URL forms are:
+
+    git@HOST:OWNER/REPO.git
+    https://HOST/OWNER/REPO.git
+    ssh://git@HOST[:PORT]/OWNER/REPO.git
+
+The host must provide the GitHub API. The SSH port is not used for API calls.
+If no supported remote is found, only commit information is displayed.
+
+The first PR returned by GitHub for the commit is displayed. If no PR exists,
+gh is missing, or the API request fails, commit information is still shown.
+If opening a PR fails, a warning is shown and the popup remains available.
+
+Commands run synchronously; large repositories or slow GitHub requests may
+delay the popup. There is no cache or background lookup.
+
+==============================================================================
+vim:tw=78:ts=8:noet:ft=help:norl:

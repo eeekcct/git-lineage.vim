@@ -62,7 +62,10 @@ export def Show()
   add(lines, '')
   add(lines, empty(pr_number) ? 'q/Esc: close' : 'o: open PR | q/Esc: close')
 
-  popup_id = popup_create(lines, {
+  popup_id = popup_atcursor(lines, {
+    'pos': 'botleft',
+    'line': 'cursor-1',
+    'col': 'cursor+10',
     'title': ' Git Lineage ',
     'border': [],
     'padding': [0, 1, 0, 1],

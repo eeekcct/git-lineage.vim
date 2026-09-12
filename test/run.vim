@@ -86,6 +86,9 @@ function! s:Run() abort
   call assert_equal('Commit: ' . first_sha, s:Popup()[0])
   call assert_equal('Author: Lineage Test', s:Popup()[1])
   call assert_equal('Title:  First commit', s:Popup()[3])
+  let popup_pos = popup_getpos(popup_list()[0])
+  let cursor_pos = screenpos(win_getid(), line('.'), col('.'))
+  call assert_equal(cursor_pos.col + 10, popup_pos.col, 'Popup starts 10 columns right of cursor')
   call assert_false(filereadable($GIT_LINEAGE_TEST_LOG), 'No remote means no API call')
 
   call cursor(2, 1)

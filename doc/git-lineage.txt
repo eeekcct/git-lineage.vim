@@ -50,6 +50,8 @@ While the popup is visible in Normal mode:
 Moving the cursor or clicking inside the popup also closes it. Repeating
 :GitLineage replaces the previous popup. Other keys retain their normal
 behavior; popup shortcuts are not active in Insert or Command-line mode.
+The popup normally opens above the cursor, with its left edge 10 screen columns
+to the right. Vim adjusts the position when it would go outside the screen.
 
 ==============================================================================
 MAPPINGS                                          *git-lineage-mappings*

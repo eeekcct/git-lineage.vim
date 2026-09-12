@@ -48,6 +48,8 @@ While the popup is visible in Normal mode:
 
 The popup also closes when the cursor moves or when you click inside it.
 Running the command again replaces the previous popup.
+It opens above the cursor, with its left edge offset 10 screen columns to the
+right; Vim adjusts the position when it would go outside the screen.
 
 No default key binding is installed. An optional mapping for your vimrc:
 

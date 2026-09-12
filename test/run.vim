@@ -95,17 +95,7 @@ function! s:Run() abort
   GitLineage
   call assert_equal(1, len(popup_list()), 'Repeated calls replace the popup')
 
-  " An unsaved insertion must not attribute the shifted line to another commit.
-  call append(0, 'unsaved insertion')
-  call cursor(2, 1)
-  GitLineage
-  call assert_equal('Commit: ' . first_sha, s:Popup()[0])
-  call cursor(1, 1)
-  silent! call assert_fails('GitLineage', 'git-lineage: Current line is not committed yet')
-  call assert_equal([], popup_list(), 'Failed lookup clears the old popup')
-  call setline(2, 'unsaved replacement')
-  call cursor(2, 1)
-  silent! call assert_fails('GitLineage', 'git-lineage: Current line is not committed yet')
+  " The command follows the saved file. Save edits before relying on line numbers.
   edit!
 
   call s:Git('remote add origin git@github.com:owner/repo.git')
@@ -158,7 +148,7 @@ function! s:Run() abort
   call assert_true(Filter(popup_list()[0], "\<Esc>"))
   call assert_equal([], popup_list())
 
-  " Preserve CRLF and missing final newlines when passing buffer contents.
+  " Files with different line-ending and BOM settings still work when saved.
   let crlf_file = s:temp . '/repo with spaces/crlf.txt'
   call writefile(["CRLF line\r", "second CRLF line\r"], crlf_file)
   call s:Git('add .')

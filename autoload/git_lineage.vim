@@ -27,18 +27,9 @@ export def Show()
   endif
 
   var lnum = line('.')
-  var blame_cmd = git .. ' blame --porcelain --contents - -L ' .. lnum .. ',' .. lnum
+  var blame_cmd = git .. ' blame --porcelain -L ' .. lnum .. ',' .. lnum
     .. ' -- ' .. shellescape(fnamemodify(file, ':t'))
-  # Use the buffer so unsaved insertions and edits keep the correct line identity.
-  var newline = &fileformat == 'dos' ? "\r\n" : (&fileformat == 'mac' ? "\r" : "\n")
-  var contents = join(getline(1, '$'), newline) .. (&endofline ? newline : '')
-  if &bomb
-    contents = nr2char(0xfeff) .. contents
-  endif
-  if &fileencoding != '' && &fileencoding != &encoding
-    contents = iconv(contents, &encoding, &fileencoding)
-  endif
-  var blame = systemlist(blame_cmd, contents)
+  var blame = systemlist(blame_cmd)
   if v:shell_error != 0 || empty(blame)
     echoerr 'git-lineage: git blame failed; the file must be tracked with committed history'
     return

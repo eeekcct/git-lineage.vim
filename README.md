@@ -57,8 +57,10 @@ nmap <silent> <Leader>gl <Plug>(git-lineage)
 
 ## Behavior and limitations
 
-- Blame uses the current buffer, including unsaved edits. Newly added or changed
-  lines without a commit report `Current line is not committed yet`.
+- Blame uses the saved file on disk. Save the file before running the command;
+  unsaved insertions or deletions can make the cursor line refer to a different
+  saved line. Newly added or changed lines without a commit report
+  `Current line is not committed yet`.
 - Files need committed Git history. Untracked files and special buffers are
   not supported.
 - PR lookup uses the current branch's configured remote, falling back to

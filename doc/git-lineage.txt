@@ -76,10 +76,11 @@ Override these groups in your colorscheme or a ColorScheme autocommand: >
 ==============================================================================
 BEHAVIOR                                          *git-lineage-behavior*
 
-The current buffer is passed to git blame, so unsaved insertions do not shift
-the lookup to the wrong line. A newly added or changed line without a commit
-reports "Current line is not committed yet". Files must have committed Git
-history; untracked files and special buffers are not supported.
+The saved file on disk is passed to git blame. Save the file before running the
+command; unsaved insertions or deletions can make the cursor line refer to a
+different saved line. A newly added or changed line without a commit reports
+"Current line is not committed yet". Files must have committed Git history;
+untracked files and special buffers are not supported.
 
 The current branch's configured remote is used for PR lookup. If none is
 configured, or HEAD is detached, origin is used. Local tracking (remote ".")

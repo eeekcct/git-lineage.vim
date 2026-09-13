@@ -143,8 +143,12 @@ function! s:Run() abort
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_equal(-1, index(s:Popup(), 'PR #42'))
   call assert_true(Filter(popup_list()[0], 'o'))
-  call assert_true(index(s:Popup(), 'PR #42') >= 0)
+  call assert_equal(-1, index(s:Popup(), 'PR #42'), 'o does not change the popup')
   call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  let command_count = len(readfile($GIT_LINEAGE_TEST_LOG))
+  call assert_true(Filter(popup_list()[0], 'p'))
+  call assert_true(index(s:Popup(), 'PR #42') >= 0)
+  call assert_equal(command_count, len(readfile($GIT_LINEAGE_TEST_LOG)), 'p reuses the lookup from o')
 
   let g:git_lineage_show_pr = 1
   for remote in ['git@github.com:owner/repo.git', 'https://github.com/owner/repo.git/', 'ssh://git@github.com:2222/owner/repo.git']

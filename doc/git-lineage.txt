@@ -45,8 +45,8 @@ While the popup is visible in Normal mode:
 
     p                   Look up the associated PR and add its number, title,
                         and URL to the popup.
-    o                   Look up the associated PR, then open it in the browser.
-                        If no PR was found, only show the lookup result.
+    o                   Look up the associated PR, then open it in the browser
+                        without changing the popup. The result is cached for p.
     c                   Open the commit on GitHub in the browser.
     q or <Esc>          Close the popup.
 

@@ -126,8 +126,9 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
 
   if (key == 'p' || key == 'o') && !empty(state.host) && !empty(state.repo)
     LoadPrInfo(state)
-    popup_settext(id, PopupLines(state))
-    if key == 'o' && !empty(state.pr_url)
+    if key == 'p'
+      popup_settext(id, PopupLines(state))
+    elseif !empty(state.pr_url)
       system('gh pr view ' .. shellescape(state.pr_url) .. ' --web')
       if v:shell_error != 0
         Warn('Could not open the PR; check gh authentication and browser settings')

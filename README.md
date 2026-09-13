@@ -44,7 +44,7 @@ While the popup is visible in Normal mode:
 | Key | Action |
 | --- | --- |
 | `p` | Look up and display the associated PR |
-| `o` | Look up the associated PR and open it in your browser |
+| `o` | Look up the associated PR and open it without changing the popup |
 | `c` | Open the commit in your browser |
 | `q` / `Esc` | Close the popup |
 

@@ -20,17 +20,16 @@ export def Show()
   endif
 
   var git = 'git --literal-pathspecs -C ' .. shellescape(fnamemodify(file, ':h'))
-  var repo_check = system(git .. ' rev-parse --is-inside-work-tree')
-  if v:shell_error != 0 || trim(repo_check) != 'true'
-    echoerr 'git-lineage: Not inside a Git repository'
-    return
-  endif
-
   var lnum = line('.')
   var blame_cmd = git .. ' blame --porcelain -L ' .. lnum .. ',' .. lnum
     .. ' -- ' .. shellescape(fnamemodify(file, ':t'))
   var blame = systemlist(blame_cmd)
   if v:shell_error != 0 || empty(blame)
+    var repo_check = system(git .. ' rev-parse --is-inside-work-tree')
+    if v:shell_error != 0 || trim(repo_check) != 'true'
+      echoerr 'git-lineage: Not inside a Git repository'
+      return
+    endif
     echoerr 'git-lineage: git blame failed; the file must be tracked with committed history'
     return
   endif
@@ -41,18 +40,16 @@ export def Show()
     return
   endif
 
-  # Newline separators preserve tabs and empty subjects in commit messages.
-  var fields = systemlist(git .. ' show -s --format='
-    .. shellescape('%h%n%an%n%ad%n%s') .. ' --date=short ' .. shellescape(sha))
-  if v:shell_error != 0 || len(fields) < 3
-    echoerr 'git-lineage: git show failed'
+  var commit = ParseBlame(blame, sha)
+  if empty(commit)
+    echoerr 'git-lineage: Invalid git blame output'
     return
   endif
   var lines = [
-    'Commit: ' .. fields[0],
-    'Author: ' .. fields[1],
-    'Date:   ' .. fields[2],
-    'Title:  ' .. join(fields[3 :], ' '),
+    'Commit: ' .. strpart(sha, 0, 7),
+    'Author: ' .. commit.author,
+    'Date:   ' .. AuthorDate(commit.author_time, commit.author_tz),
+    'Title:  ' .. commit.summary,
   ]
 
   var repo_info = GetRepoInfo(git)
@@ -85,6 +82,57 @@ export def Show()
     'filtermode': 'n',
     'filter': (id, key) => PopupFilter(id, key, state),
   })
+enddef
+
+def ParseBlame(lines: list<string>, sha: string): dict<string>
+  var commit: dict<string> = {}
+  for line in lines[1 :]
+    if line =~ '^\t'
+      break
+    endif
+    var separator = stridx(line, ' ')
+    if separator > 0
+      commit[strpart(line, 0, separator)] = strpart(line, separator + 1)
+    endif
+  endfor
+  if empty(get(commit, 'author', ''))
+      || get(commit, 'author-time', '') !~ '^-\?\d\+$'
+      || get(commit, 'author-tz', '') !~ '^[+-]\d\{4}$'
+      || !has_key(commit, 'summary')
+    return {}
+  endif
+  return {
+    author: commit.author,
+    author_time: commit['author-time'],
+    author_tz: commit['author-tz'],
+    summary: commit.summary == '(' .. sha .. ')' ? '' : commit.summary,
+  }
+enddef
+
+def AuthorDate(timestamp: string, timezone: string): string
+  var sign = timezone[0] == '-' ? -1 : 1
+  var offset = sign * (str2nr(timezone[1 : 2]) * 3600
+    + str2nr(timezone[3 : 4]) * 60)
+  var seconds = str2nr(timestamp) + offset
+  var days = seconds / 86400
+  if seconds < 0 && seconds % 86400 != 0
+    days -= 1
+  endif
+
+  # Convert days since 1970-01-01 to a Gregorian calendar date.
+  var z = days + 719468
+  var era = (z >= 0 ? z : z - 146096) / 146097
+  var day_of_era = z - era * 146097
+  var year_of_era = (day_of_era - day_of_era / 1460
+    + day_of_era / 36524 - day_of_era / 146096) / 365
+  var year = year_of_era + era * 400
+  var day_of_year = day_of_era
+    - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+  var month_part = (5 * day_of_year + 2) / 153
+  var day = day_of_year - (153 * month_part + 2) / 5 + 1
+  var month = month_part + (month_part < 10 ? 3 : -9)
+  year += month <= 2 ? 1 : 0
+  return printf('%04d-%02d-%02d', year, month, day)
 enddef
 
 def PopupLines(state: dict<any>): list<string>

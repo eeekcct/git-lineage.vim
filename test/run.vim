@@ -78,12 +78,12 @@ function! s:Run() abort
   let file = s:temp . '/repo with spaces/sub dir/example file.txt'
   call writefile(['first line', 'second line'], file)
   call s:Git('add .')
-  call s:Git('commit -m "First commit"')
+  call s:Git('commit --date="2001-02-03T00:30:00+1400" -m "First commit"')
   let first_sha = s:Git('rev-parse --short HEAD')
   call writefile(['first line', 'changed second line'], file)
   call writefile(["Subject\twith tab"], s:temp . '/message')
   call s:Git('add .')
-  call s:Git('commit -F ' . shellescape(s:temp . '/message'))
+  call s:Git('commit --date="2001-02-03T23:30:00-1200" -F ' . shellescape(s:temp . '/message'))
   let second_sha = s:Git('rev-parse --short HEAD')
 
   " The current working directory need not be the file's repository.
@@ -93,6 +93,7 @@ function! s:Run() abort
   GitLineage
   call assert_equal('Commit: ' . first_sha, s:Popup()[0])
   call assert_equal('Author: Lineage Test', s:Popup()[1])
+  call assert_equal('Date:   2001-02-03', s:Popup()[2])
   call assert_equal('Title:  First commit', s:Popup()[3])
   let popup_pos = popup_getpos(popup_list()[0])
   let cursor_pos = screenpos(win_getid(), line('.'), col('.'))
@@ -102,6 +103,7 @@ function! s:Run() abort
   call cursor(2, 1)
   GitLineage
   call assert_equal('Commit: ' . second_sha, s:Popup()[0])
+  call assert_equal('Date:   2001-02-03', s:Popup()[2])
   call assert_equal("Title:  Subject\twith tab", s:Popup()[3])
   GitLineage
   call assert_equal(1, len(popup_list()), 'Repeated calls replace the popup')

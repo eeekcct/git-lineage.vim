@@ -40,20 +40,28 @@ function! s:Run() abort
   call writefile([], $GIT_CONFIG_GLOBAL)
   let $GIT_LINEAGE_TEST_RESPONSE = s:temp . '/response.json'
   let $GIT_LINEAGE_TEST_LOG = s:temp . '/gh.log'
+  let $GIT_LINEAGE_TEST_INPUT = s:temp . '/gh-input.json'
   let $GIT_LINEAGE_TEST_EXIT = '0'
   if has('win32')
     let $GIT_LINEAGE_TEST_RESPONSE = substitute($GIT_LINEAGE_TEST_RESPONSE, '/', '\\', 'g')
+    let $GIT_LINEAGE_TEST_INPUT = substitute($GIT_LINEAGE_TEST_INPUT, '/', '\\', 'g')
     call writefile(['@echo off', 'echo %*>>"%GIT_LINEAGE_TEST_LOG%"',
-          \ 'if "%~1"=="api" type "%GIT_LINEAGE_TEST_RESPONSE%"',
+          \ 'if "%~1"=="api" (',
+          \ '  more >"%GIT_LINEAGE_TEST_INPUT%"',
+          \ '  type "%GIT_LINEAGE_TEST_RESPONSE%"',
+          \ ')',
           \ 'exit /b %GIT_LINEAGE_TEST_EXIT%'], s:temp . '/bin/gh.cmd')
   else
     call writefile(['#!/bin/sh', 'printf ''%s\n'' "$*" >> "$GIT_LINEAGE_TEST_LOG"',
-          \ 'if [ "$1" = api ]; then cat "$GIT_LINEAGE_TEST_RESPONSE"; fi',
+          \ 'if [ "$1" = api ]; then',
+          \ '  cat > "$GIT_LINEAGE_TEST_INPUT"',
+          \ '  cat "$GIT_LINEAGE_TEST_RESPONSE"',
+          \ 'fi',
           \ 'exit "$GIT_LINEAGE_TEST_EXIT"'], s:temp . '/bin/gh')
     call setfperm(s:temp . '/bin/gh', 'rwx------')
   endif
   let $PATH = s:temp . '/bin' . (has('win32') ? ';' : ':') . s:old_path
-  call s:Response({})
+  call s:Response({'data': {'repository': {'object': {'associatedPullRequests': {'nodes': []}}}}})
 
   runtime plugin/git-lineage.vim
   runtime plugin/git-lineage.vim
@@ -105,10 +113,18 @@ function! s:Run() abort
   call cursor(1, 1)
   GitLineage
   call assert_true(index(s:Popup(), 'No pull request found') >= 0, string(s:Popup()))
+  let request = json_decode(join(readfile($GIT_LINEAGE_TEST_INPUT), "\n"))
+  call assert_equal('owner', request.variables.owner)
+  call assert_equal('repo', request.variables.name)
+  call assert_match('^' . first_sha, request.variables.sha)
+  call assert_match('associatedPullRequests', request.query)
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_true(Filter(popup_list()[0], 'o'), 'o is consumed even without a PR')
 
-  call s:Response({'number': 42, 'title': "Fix\tquoted \"title\"", 'html_url': 'https://github.com/owner/repo/pull/42'})
+  call s:Response({'data': {'repository': {'object': {'associatedPullRequests': {'nodes': [
+        \ {'number': 42, 'title': "Fix\tquoted \"title\"", 'url': 'https://github.com/owner/repo/pull/42',
+        \  'repository': {'isFork': v:false, 'owner': {'login': 'owner'}}}
+        \ ]}}}}})
   for remote in ['git@github.com:owner/repo.git', 'https://github.com/owner/repo.git/', 'ssh://git@github.com:2222/owner/repo.git']
     call s:Git('remote set-url origin ' . shellescape(remote))
     GitLineage
@@ -117,7 +133,7 @@ function! s:Run() abort
   endfor
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_true(Filter(popup_list()[0], 'o'))
-  call assert_match('pr view .*42.* --repo .*github.com/owner/repo.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   let $GIT_LINEAGE_TEST_EXIT = '1'
   call assert_true(Filter(popup_list()[0], 'o'))
   call assert_match('Could not open the PR', execute('messages'))
@@ -126,22 +142,23 @@ function! s:Run() abort
   call assert_true(index(s:Popup(), 'GitHub API error') >= 0)
   let $GIT_LINEAGE_TEST_EXIT = '0'
 
-  for response in ['not json', 'null', '[]', '{"number":"42","title":"x","html_url":"x"}']
+  for response in ['not json', 'null', '[]', '{"data":{}}',
+        \ '{"data":{"repository":{"object":{"associatedPullRequests":{"nodes":[{"number":"42","title":"x","url":"x","repository":{"isFork":false,"owner":{"login":"owner"}}}]}}}}}']
     call writefile([response], $GIT_LINEAGE_TEST_RESPONSE)
     GitLineage
     call assert_true(index(s:Popup(), 'Invalid GitHub API response') >= 0, response)
   endfor
 
   " Remote names may include slashes; tracking remotes take priority over origin.
-  call s:Response({})
+  call s:Response({'data': {'repository': {'object': {'associatedPullRequests': {'nodes': []}}}}})
   call s:Git('remote add team/upstream git@ghe.example.com:team/project.git')
   call s:Git('config branch.main.remote team/upstream')
   call s:Git('config branch.main.merge refs/heads/main')
   GitLineage
-  call assert_match('--hostname .*ghe.example.com.* .*repos/team/project/commits/', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('--hostname .*ghe.example.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   call s:Git('checkout --detach')
   GitLineage
-  call assert_match('--hostname .*github.com.* .*repos/owner/repo/commits/', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('--hostname .*github.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
 
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_true(Filter(popup_list()[0], 'q'))

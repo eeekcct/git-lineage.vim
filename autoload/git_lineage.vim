@@ -58,9 +58,9 @@ export def Show()
   var repo_info = GetRepoInfo(git)
   var host = get(repo_info, 0, '')
   var repo = get(repo_info, 1, '')
-  var pr_number = AddPrInfo(lines, sha, host, repo)
+  var pr_url = AddPrInfo(lines, sha, host, repo)
   add(lines, '')
-  add(lines, empty(pr_number) ? 'q/Esc: close' : 'o: open PR | q/Esc: close')
+  add(lines, empty(pr_url) ? 'q/Esc: close' : 'o: open PR | q/Esc: close')
 
   popup_id = popup_atcursor(lines, {
     'pos': 'botleft',
@@ -74,20 +74,19 @@ export def Show()
     'close': 'click',
     'moved': 'any',
     'filtermode': 'n',
-    'filter': (id, key) => PopupFilter(id, key, host, repo, pr_number),
+    'filter': (id, key) => PopupFilter(id, key, pr_url),
   })
 enddef
 
-def PopupFilter(id: number, key: string, host: string, repo: string, pr_number: string): bool
+def PopupFilter(id: number, key: string, pr_url: string): bool
   if key == 'q' || key == "\<Esc>"
     popup_close(id)
     return true
   endif
 
   if key == 'o'
-    if !empty(pr_number)
-      system('gh pr view ' .. shellescape(pr_number)
-        .. ' --repo ' .. shellescape(host .. '/' .. repo) .. ' --web')
+    if !empty(pr_url)
+      system('gh pr view ' .. shellescape(pr_url) .. ' --web')
       if v:shell_error != 0
         echohl WarningMsg
         echomsg 'git-lineage: Could not open the PR; check gh authentication and browser settings'
@@ -145,34 +144,108 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
     return ''
   endif
 
-  var endpoint = 'repos/' .. repo .. '/commits/' .. sha .. '/pulls'
-  var output = trim(system('gh api --hostname ' .. shellescape(host)
-    .. ' ' .. shellescape(endpoint) .. ' --jq ' .. shellescape('.[0] // {}')))
+  var query =<< trim END
+  query($owner: String!, $name: String!, $sha: GitObjectID!) {
+    repository(owner: $owner, name: $name) {
+      object(oid: $sha) {
+        ... on Commit {
+          associatedPullRequests(
+            first: 2
+            orderBy: {field: UPDATED_AT, direction: DESC}
+          ) {
+            nodes {
+              number
+              title
+              url
+              repository {
+                isFork
+                owner {
+                  login
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  END
+
+  var query_text = join(query, "\n")
+  var repo_parts = split(repo, '/')
+  if len(repo_parts) != 2
+    return ''
+  endif
+
+  var owner = repo_parts[0]
+  var name = repo_parts[1]
+
+  # Passing the multiline query as a command-line argument makes system()
+  # generate an invalid temporary command file on Windows. Send the complete
+  # GraphQL request as JSON on stdin instead.
+  var request = json_encode({
+    query: query_text,
+    variables: {
+      owner: owner,
+      name: name,
+      sha: sha,
+    },
+  })
+  var cmd = 'gh api graphql'
+    .. ' --hostname ' .. shellescape(host)
+    .. ' --method POST'
+    .. ' --input -'
+
+  var output = trim(system(cmd, request))
+
   if v:shell_error != 0
     add(lines, 'GitHub API error')
     add(lines, 'Check gh authentication or API access for ' .. host)
     return ''
   endif
 
-  var pr: dict<any>
+  if empty(output)
+    return ''
+  endif
+
+  var data: any
   try
-    pr = json_decode(output)
+    data = json_decode(output)
   catch
     add(lines, 'Invalid GitHub API response')
     return ''
   endtry
-  if empty(pr)
+  if type(data) != v:t_dict
+      || type(get(data, 'data', 0)) != v:t_dict
+      || type(get(data.data, 'repository', 0)) != v:t_dict
+      || type(get(data.data.repository, 'object', 0)) != v:t_dict
+      || type(get(data.data.repository.object, 'associatedPullRequests', 0)) != v:t_dict
+      || type(get(data.data.repository.object.associatedPullRequests, 'nodes', 0)) != v:t_list
+    add(lines, 'Invalid GitHub API response')
+    return ''
+  endif
+
+  var prs = data.data.repository.object.associatedPullRequests.nodes
+  filter(prs, (_, pr) =>
+    !pr.repository.isFork || pr.repository.owner.login == owner
+  )
+  if empty(prs)
     add(lines, 'No pull request found')
     return ''
   endif
-  if type(get(pr, 'number', '')) != v:t_number || get(pr, 'number', 0) <= 0
-      || type(get(pr, 'title', 0)) != v:t_string || type(get(pr, 'html_url', 0)) != v:t_string
+
+  var pr = prs[0]
+
+  if type(get(pr, 'number', '')) != v:t_number
+      || get(pr, 'number', 0) <= 0
+      || type(get(pr, 'title', 0)) != v:t_string
+      || type(get(pr, 'url', 0)) != v:t_string
     add(lines, 'Invalid GitHub API response')
     return ''
   endif
 
   add(lines, 'PR #' .. pr.number)
   add(lines, 'Title: ' .. substitute(pr.title, '[\r\n\t]', ' ', 'g'))
-  add(lines, 'URL:   ' .. pr.html_url)
-  return string(pr.number)
+  add(lines, 'URL:   ' .. pr.url)
+  return pr.url
 enddef

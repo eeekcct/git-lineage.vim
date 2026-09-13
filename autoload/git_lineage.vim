@@ -142,7 +142,7 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
       Warn('Install gh to open commits on GitHub')
       return true
     endif
-    system('gh browse --commit ' .. shellescape(state.sha)
+    system('gh browse ' .. shellescape(state.sha)
       .. ' --repo ' .. shellescape(state.host .. '/' .. state.repo))
     if v:shell_error != 0
       Warn('Could not open the commit; check gh authentication and browser settings')

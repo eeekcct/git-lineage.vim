@@ -118,7 +118,8 @@ function! s:Run() abort
   let Filter = popup_getoptions(popup_list()[0]).filter
 
   call assert_true(Filter(popup_list()[0], 'c'))
-  call assert_match('browse --commit .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('browse .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_notmatch('browse --commit', readfile($GIT_LINEAGE_TEST_LOG)[-1])
 
   call assert_true(Filter(popup_list()[0], 'p'))
   call assert_true(index(s:Popup(), 'No pull request found') >= 0, string(s:Popup()))

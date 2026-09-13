@@ -58,11 +58,20 @@ export def Show()
   var repo_info = GetRepoInfo(git)
   var host = get(repo_info, 0, '')
   var repo = get(repo_info, 1, '')
-  var pr_url = AddPrInfo(lines, sha, host, repo)
-  add(lines, '')
-  add(lines, empty(pr_url) ? 'q/Esc: close' : 'o: open PR | q/Esc: close')
+  var state: dict<any> = {
+    commit_lines: lines,
+    sha: sha,
+    host: host,
+    repo: repo,
+    pr_loaded: false,
+    pr_lines: [],
+    pr_url: '',
+  }
+  if get(g:, 'git_lineage_show_pr', false) && !empty(host) && !empty(repo)
+    LoadPrInfo(state)
+  endif
 
-  popup_id = popup_atcursor(lines, {
+  popup_id = popup_atcursor(PopupLines(state), {
     'pos': 'botleft',
     'line': 'cursor-1',
     'col': 'cursor+10',
@@ -74,24 +83,68 @@ export def Show()
     'close': 'click',
     'moved': 'any',
     'filtermode': 'n',
-    'filter': (id, key) => PopupFilter(id, key, pr_url),
+    'filter': (id, key) => PopupFilter(id, key, state),
   })
 enddef
 
-def PopupFilter(id: number, key: string, pr_url: string): bool
+def PopupLines(state: dict<any>): list<string>
+  var lines = copy(state.commit_lines)
+  if state.pr_loaded && !empty(state.pr_lines)
+    add(lines, '')
+    extend(lines, state.pr_lines)
+  endif
+  add(lines, '')
+  if !empty(state.host) && !empty(state.repo)
+    add(lines, 'p: show PR | o: open PR | c: open commit | q/Esc: close')
+  else
+    add(lines, 'q/Esc: close')
+  endif
+  return lines
+enddef
+
+def LoadPrInfo(state: dict<any>)
+  if state.pr_loaded
+    return
+  endif
+  var result = GetPrInfo(state.sha, state.host, state.repo)
+  state.pr_loaded = true
+  state.pr_lines = result.lines
+  state.pr_url = result.url
+enddef
+
+def Warn(message: string)
+  echohl WarningMsg
+  echomsg 'git-lineage: ' .. message
+  echohl None
+enddef
+
+def PopupFilter(id: number, key: string, state: dict<any>): bool
   if key == 'q' || key == "\<Esc>"
     popup_close(id)
     return true
   endif
 
-  if key == 'o'
-    if !empty(pr_url)
-      system('gh pr view ' .. shellescape(pr_url) .. ' --web')
+  if (key == 'p' || key == 'o') && !empty(state.host) && !empty(state.repo)
+    LoadPrInfo(state)
+    popup_settext(id, PopupLines(state))
+    if key == 'o' && !empty(state.pr_url)
+      system('gh pr view ' .. shellescape(state.pr_url) .. ' --web')
       if v:shell_error != 0
-        echohl WarningMsg
-        echomsg 'git-lineage: Could not open the PR; check gh authentication and browser settings'
-        echohl None
+        Warn('Could not open the PR; check gh authentication and browser settings')
       endif
+    endif
+    return true
+  endif
+
+  if key == 'c' && !empty(state.host) && !empty(state.repo)
+    if !executable('gh')
+      Warn('Install gh to open commits on GitHub')
+      return true
+    endif
+    system('gh browse --commit ' .. shellescape(state.sha)
+      .. ' --repo ' .. shellescape(state.host .. '/' .. state.repo))
+    if v:shell_error != 0
+      Warn('Could not open the commit; check gh authentication and browser settings')
     endif
     return true
   endif
@@ -134,14 +187,11 @@ def GetRepoInfo(git: string): list<string>
   return empty(matched) ? [] : [matched[1], matched[2]]
 enddef
 
-def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): string
-  if empty(host) || empty(repo)
-    return ''
-  endif
-  add(lines, '')
+def GetPrInfo(sha: string, host: string, repo: string): dict<any>
+  var result: dict<any> = {lines: [], url: ''}
   if !executable('gh')
-    add(lines, 'Install gh to show pull request information')
-    return ''
+    add(result.lines, 'Install gh to show pull request information')
+    return result
   endif
 
   var query =<< trim END
@@ -174,15 +224,12 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
   var query_text = join(query, "\n")
   var repo_parts = split(repo, '/')
   if len(repo_parts) != 2
-    return ''
+    return result
   endif
 
   var owner = repo_parts[0]
   var name = repo_parts[1]
 
-  # Passing the multiline query as a command-line argument makes system()
-  # generate an invalid temporary command file on Windows. Send the complete
-  # GraphQL request as JSON on stdin instead.
   var request = json_encode({
     query: query_text,
     variables: {
@@ -199,21 +246,22 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
   var output = trim(system(cmd, request))
 
   if v:shell_error != 0
-    add(lines, 'GitHub API error')
-    add(lines, 'Check gh authentication or API access for ' .. host)
-    return ''
+    add(result.lines, 'GitHub API error')
+    add(result.lines, 'Check gh authentication or API access for ' .. host)
+    return result
   endif
 
   if empty(output)
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
   var data: any
   try
     data = json_decode(output)
   catch
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endtry
   if type(data) != v:t_dict
       || type(get(data, 'data', 0)) != v:t_dict
@@ -221,8 +269,8 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
       || type(get(data.data.repository, 'object', 0)) != v:t_dict
       || type(get(data.data.repository.object, 'associatedPullRequests', 0)) != v:t_dict
       || type(get(data.data.repository.object.associatedPullRequests, 'nodes', 0)) != v:t_list
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
   var prs = data.data.repository.object.associatedPullRequests.nodes
@@ -230,8 +278,8 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
     !pr.repository.isFork || pr.repository.owner.login == owner
   )
   if empty(prs)
-    add(lines, 'No pull request found')
-    return ''
+    add(result.lines, 'No pull request found')
+    return result
   endif
 
   var pr = prs[0]
@@ -240,12 +288,13 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
       || get(pr, 'number', 0) <= 0
       || type(get(pr, 'title', 0)) != v:t_string
       || type(get(pr, 'url', 0)) != v:t_string
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
-  add(lines, 'PR #' .. pr.number)
-  add(lines, 'Title: ' .. substitute(pr.title, '[\r\n\t]', ' ', 'g'))
-  add(lines, 'URL:   ' .. pr.url)
-  return pr.url
+  add(result.lines, 'PR #' .. pr.number)
+  add(result.lines, 'Title: ' .. substitute(pr.title, '[\r\n\t]', ' ', 'g'))
+  add(result.lines, 'URL:   ' .. pr.url)
+  result.url = pr.url
+  return result
 enddef

@@ -9,6 +9,7 @@ CONTENTS                                                   *git-lineage*
     Requirements ................ |git-lineage-requirements|
     Usage ....................... |git-lineage-usage|
     Mappings .................... |git-lineage-mappings|
+    Options ..................... |git-lineage-options|
     Highlights .................. |git-lineage-highlights|
     Behavior .................... |git-lineage-behavior|
 
@@ -18,9 +19,9 @@ REQUIREMENTS                                  *git-lineage-requirements*
 Vim 9.0 or later with +vim9script and +popupwin, and git on PATH.
 Neovim is not supported.
 
-GitHub CLI (gh) is optional. To look up and open pull requests, gh must be on
-PATH with authentication configured for the target repository. Commit
-information works without gh.
+GitHub CLI (gh) is optional. To look up and open pull requests or open commits
+on GitHub, gh must be on PATH with authentication configured for the target
+repository. Commit information works without gh.
 
 Authentication is handled by gh. You can use "gh auth login" or environment
 variables such as GH_TOKEN / GITHUB_TOKEN. For GitHub Enterprise Server, use
@@ -36,15 +37,17 @@ USAGE                                                *git-lineage-usage*
 
                                                           *:GitLineage*
 :GitLineage             Show the commit for the line under the cursor.
-                        Include the associated GitHub PR when available.
 
 The popup contains the abbreviated commit hash, author, author date, and
-commit subject. When a PR is found, its number, title, and URL are added.
+commit subject. Pull request details are loaded on demand by default.
 
 While the popup is visible in Normal mode:
 
-    o                   Open the displayed PR in the browser using gh.
-                        If no PR was found, do nothing.
+    p                   Look up the associated PR and add its number, title,
+                        and URL to the popup.
+    o                   Look up the associated PR, then open it in the browser.
+                        If no PR was found, only show the lookup result.
+    c                   Open the commit on GitHub in the browser.
     q or <Esc>          Close the popup.
 
 Moving the cursor or clicking inside the popup also closes it. Repeating
@@ -61,6 +64,15 @@ MAPPINGS                                          *git-lineage-mappings*
 
 No default user mapping is installed. Add a mapping to your vimrc, for example: >
     nmap <silent> <Leader>gl <Plug>(git-lineage)
+<
+==============================================================================
+OPTIONS                                            *git-lineage-options*
+
+                                           *g:git_lineage_show_pr*
+g:git_lineage_show_pr
+                        When non-zero, look up and display pull request details
+                        whenever the popup opens. The default is zero. Example: >
+    let g:git_lineage_show_pr = 1
 <
 ==============================================================================
 HIGHLIGHTS                                      *git-lineage-highlights*
@@ -95,12 +107,15 @@ also falls back to origin. Supported remote URL forms are:
 The host must provide the GitHub API. The SSH port is not used for API calls.
 If no supported remote is found, only commit information is displayed.
 
-The first PR returned by GitHub for the commit is displayed. If no PR exists,
-gh is missing, or the API request fails, commit information is still shown.
-If opening a PR fails, a warning is shown and the popup remains available.
+PR lookup runs when p or o is pressed, or when g:git_lineage_show_pr is
+non-zero. The first PR returned by GitHub for the commit is displayed. If no PR
+exists, gh is missing, or the API request fails, commit information is still
+shown. If opening a PR or commit fails, a warning is shown and the popup
+remains available.
 
 Commands run synchronously; large repositories or slow GitHub requests may
-delay the popup. There is no cache or background lookup.
+delay PR lookup. Its result is reused while the popup remains open. There is no
+persistent cache or background lookup.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

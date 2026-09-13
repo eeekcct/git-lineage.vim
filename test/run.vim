@@ -112,19 +112,41 @@ function! s:Run() abort
   call s:Git('remote add origin git@github.com:owner/repo.git')
   call cursor(1, 1)
   GitLineage
+  call assert_true(index(s:Popup(), 'p: show PR | o: open PR | c: open commit | q/Esc: close') >= 0)
+  call assert_equal(-1, index(s:Popup(), 'No pull request found'))
+  call assert_false(filereadable($GIT_LINEAGE_TEST_LOG), 'PR lookup is opt-in by default')
+  let Filter = popup_getoptions(popup_list()[0]).filter
+
+  call assert_true(Filter(popup_list()[0], 'c'))
+  call assert_match('browse --commit .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+
+  call assert_true(Filter(popup_list()[0], 'p'))
   call assert_true(index(s:Popup(), 'No pull request found') >= 0, string(s:Popup()))
   let request = json_decode(join(readfile($GIT_LINEAGE_TEST_INPUT), "\n"))
   call assert_equal('owner', request.variables.owner)
   call assert_equal('repo', request.variables.name)
   call assert_match('^' . first_sha, request.variables.sha)
   call assert_match('associatedPullRequests', request.query)
-  let Filter = popup_getoptions(popup_list()[0]).filter
+  let command_count = len(readfile($GIT_LINEAGE_TEST_LOG))
+  call assert_true(Filter(popup_list()[0], 'p'))
+  call assert_equal(command_count, len(readfile($GIT_LINEAGE_TEST_LOG)), 'p caches the PR lookup')
   call assert_true(Filter(popup_list()[0], 'o'), 'o is consumed even without a PR')
+  call assert_equal(command_count, len(readfile($GIT_LINEAGE_TEST_LOG)), 'o reuses a negative PR lookup')
 
   call s:Response({'data': {'repository': {'object': {'associatedPullRequests': {'nodes': [
+        \ {'number': 41, 'title': 'Fork PR', 'url': 'https://github.com/contributor/repo/pull/41',
+        \  'repository': {'isFork': v:true, 'owner': {'login': 'contributor'}}},
         \ {'number': 42, 'title': "Fix\tquoted \"title\"", 'url': 'https://github.com/owner/repo/pull/42',
         \  'repository': {'isFork': v:false, 'owner': {'login': 'owner'}}}
         \ ]}}}}})
+  GitLineage
+  let Filter = popup_getoptions(popup_list()[0]).filter
+  call assert_equal(-1, index(s:Popup(), 'PR #42'))
+  call assert_true(Filter(popup_list()[0], 'o'))
+  call assert_true(index(s:Popup(), 'PR #42') >= 0)
+  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+
+  let g:git_lineage_show_pr = 1
   for remote in ['git@github.com:owner/repo.git', 'https://github.com/owner/repo.git/', 'ssh://git@github.com:2222/owner/repo.git']
     call s:Git('remote set-url origin ' . shellescape(remote))
     GitLineage
@@ -159,6 +181,7 @@ function! s:Run() abort
   call s:Git('checkout --detach')
   GitLineage
   call assert_match('--hostname .*github.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  unlet g:git_lineage_show_pr
 
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_true(Filter(popup_list()[0], 'q'))
@@ -209,7 +232,12 @@ function! s:Run() abort
   let $PATH = s:temp . '/git-only'
   call assert_false(executable('gh'))
   GitLineage
+  call assert_equal(-1, index(s:Popup(), 'Install gh to show pull request information'))
+  let Filter = popup_getoptions(popup_list()[0]).filter
+  call assert_true(Filter(popup_list()[0], 'p'))
   call assert_true(index(s:Popup(), 'Install gh to show pull request information') >= 0)
+  call assert_true(Filter(popup_list()[0], 'c'))
+  call assert_match('Install gh to open commits on GitHub', execute('messages'))
   let $PATH = s:temp . '/no-commands'
   silent! call assert_fails('GitLineage', 'git-lineage: git command not found')
   let $PATH = fixture_path

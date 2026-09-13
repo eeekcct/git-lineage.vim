@@ -3,15 +3,15 @@
 See the commit behind the line under your cursor, then open its GitHub pull
 request without leaving Vim to search for it.
 
-Run `:GitLineage` to show a popup with the commit hash, author, date, subject,
-and associated pull request when available.
+Run `:GitLineage` to show a popup with the commit hash, author, date, and
+subject. Pull request details can be loaded from the popup when needed.
 
 ## Requirements
 
 - Vim 9.0 or later with `+vim9script` and `+popupwin` (Neovim is not supported).
 - [Git](https://git-scm.com/) on your `PATH`.
 - Optional: [GitHub CLI (`gh`)](https://cli.github.com/) on your `PATH`,
-  to look up and open pull requests.
+  to look up and open pull requests or open commits on GitHub.
 
 Commit information works without `gh`.
 
@@ -43,7 +43,9 @@ While the popup is visible in Normal mode:
 
 | Key | Action |
 | --- | --- |
-| `o` | Open the displayed PR in your browser, if one was found |
+| `p` | Look up and display the associated PR |
+| `o` | Look up the associated PR and open it in your browser |
+| `c` | Open the commit in your browser |
 | `q` / `Esc` | Close the popup |
 
 The popup also closes when the cursor moves or when you click inside it.
@@ -55,6 +57,13 @@ No default key binding is installed. An optional mapping for your vimrc:
 
 ```vim
 nmap <silent> <Leader>gl <Plug>(git-lineage)
+```
+
+PR lookup is disabled on initial display by default. To include PR details
+whenever the popup opens, add this to your vimrc:
+
+```vim
+let g:git_lineage_show_pr = 1
 ```
 
 ## Behavior and limitations
@@ -73,7 +82,8 @@ nmap <silent> <Leader>gl <Plug>(git-lineage)
 - If GitHub returns several PRs for a commit, the first result is displayed.
   A commit without an associated PR still shows its commit information.
 - Git and GitHub CLI commands run synchronously. Large histories or a slow
-  network can delay the popup.
+  network can delay PR lookup. A lookup is reused while the popup remains
+  open.
 
 The popup uses the `GitLineagePopup` and `GitLineageBorder` highlight groups,
 linked to `Normal` and `Comment` by default. See `:help git-lineage` for details.

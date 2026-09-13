@@ -20,17 +20,16 @@ export def Show()
   endif
 
   var git = 'git --literal-pathspecs -C ' .. shellescape(fnamemodify(file, ':h'))
-  var repo_check = system(git .. ' rev-parse --is-inside-work-tree')
-  if v:shell_error != 0 || trim(repo_check) != 'true'
-    echoerr 'git-lineage: Not inside a Git repository'
-    return
-  endif
-
   var lnum = line('.')
   var blame_cmd = git .. ' blame --porcelain -L ' .. lnum .. ',' .. lnum
     .. ' -- ' .. shellescape(fnamemodify(file, ':t'))
   var blame = systemlist(blame_cmd)
   if v:shell_error != 0 || empty(blame)
+    var repo_check = system(git .. ' rev-parse --is-inside-work-tree')
+    if v:shell_error != 0 || trim(repo_check) != 'true'
+      echoerr 'git-lineage: Not inside a Git repository'
+      return
+    endif
     echoerr 'git-lineage: git blame failed; the file must be tracked with committed history'
     return
   endif
@@ -41,28 +40,35 @@ export def Show()
     return
   endif
 
-  # Newline separators preserve tabs and empty subjects in commit messages.
-  var fields = systemlist(git .. ' show -s --format='
-    .. shellescape('%h%n%an%n%ad%n%s') .. ' --date=short ' .. shellescape(sha))
-  if v:shell_error != 0 || len(fields) < 3
-    echoerr 'git-lineage: git show failed'
+  var commit = ParseBlame(blame, sha)
+  if empty(commit)
+    echoerr 'git-lineage: Invalid git blame output'
     return
   endif
   var lines = [
-    'Commit: ' .. fields[0],
-    'Author: ' .. fields[1],
-    'Date:   ' .. fields[2],
-    'Title:  ' .. join(fields[3 :], ' '),
+    'Commit: ' .. strpart(sha, 0, 7),
+    'Author: ' .. commit.author,
+    'Date:   ' .. AuthorDate(commit.author_time, commit.author_tz),
+    'Title:  ' .. commit.summary,
   ]
 
   var repo_info = GetRepoInfo(git)
   var host = get(repo_info, 0, '')
   var repo = get(repo_info, 1, '')
-  var pr_url = AddPrInfo(lines, sha, host, repo)
-  add(lines, '')
-  add(lines, empty(pr_url) ? 'q/Esc: close' : 'o: open PR | q/Esc: close')
+  var state: dict<any> = {
+    commit_lines: lines,
+    sha: sha,
+    host: host,
+    repo: repo,
+    pr_loaded: false,
+    pr_lines: [],
+    pr_url: '',
+  }
+  if get(g:, 'git_lineage_show_pr', false) && !empty(host) && !empty(repo)
+    LoadPrInfo(state)
+  endif
 
-  popup_id = popup_atcursor(lines, {
+  popup_id = popup_atcursor(PopupLines(state), {
     'pos': 'botleft',
     'line': 'cursor-1',
     'col': 'cursor+10',
@@ -74,24 +80,120 @@ export def Show()
     'close': 'click',
     'moved': 'any',
     'filtermode': 'n',
-    'filter': (id, key) => PopupFilter(id, key, pr_url),
+    'filter': (id, key) => PopupFilter(id, key, state),
   })
 enddef
 
-def PopupFilter(id: number, key: string, pr_url: string): bool
+def ParseBlame(lines: list<string>, sha: string): dict<string>
+  var commit: dict<string> = {}
+  for line in lines[1 :]
+    if line =~ '^\t'
+      break
+    endif
+    var separator = stridx(line, ' ')
+    if separator > 0
+      commit[strpart(line, 0, separator)] = strpart(line, separator + 1)
+    endif
+  endfor
+  if empty(get(commit, 'author', ''))
+      || get(commit, 'author-time', '') !~ '^-\?\d\+$'
+      || get(commit, 'author-tz', '') !~ '^[+-]\d\{4}$'
+      || !has_key(commit, 'summary')
+    return {}
+  endif
+  return {
+    author: commit.author,
+    author_time: commit['author-time'],
+    author_tz: commit['author-tz'],
+    summary: commit.summary == '(' .. sha .. ')' ? '' : commit.summary,
+  }
+enddef
+
+def AuthorDate(timestamp: string, timezone: string): string
+  var sign = timezone[0] == '-' ? -1 : 1
+  var offset = sign * (str2nr(timezone[1 : 2]) * 3600
+    + str2nr(timezone[3 : 4]) * 60)
+  var seconds = str2nr(timestamp) + offset
+  var days = seconds / 86400
+  if seconds < 0 && seconds % 86400 != 0
+    days -= 1
+  endif
+
+  # Convert days since 1970-01-01 to a Gregorian calendar date.
+  var z = days + 719468
+  var era = (z >= 0 ? z : z - 146096) / 146097
+  var day_of_era = z - era * 146097
+  var year_of_era = (day_of_era - day_of_era / 1460
+    + day_of_era / 36524 - day_of_era / 146096) / 365
+  var year = year_of_era + era * 400
+  var day_of_year = day_of_era
+    - (365 * year_of_era + year_of_era / 4 - year_of_era / 100)
+  var month_part = (5 * day_of_year + 2) / 153
+  var day = day_of_year - (153 * month_part + 2) / 5 + 1
+  var month = month_part + (month_part < 10 ? 3 : -9)
+  year += month <= 2 ? 1 : 0
+  return printf('%04d-%02d-%02d', year, month, day)
+enddef
+
+def PopupLines(state: dict<any>): list<string>
+  var lines = copy(state.commit_lines)
+  if state.pr_loaded && !empty(state.pr_lines)
+    add(lines, '')
+    extend(lines, state.pr_lines)
+  endif
+  add(lines, '')
+  if !empty(state.host) && !empty(state.repo)
+    add(lines, 'p: show PR | o: open PR | c: open commit | q/Esc: close')
+  else
+    add(lines, 'q/Esc: close')
+  endif
+  return lines
+enddef
+
+def LoadPrInfo(state: dict<any>)
+  if state.pr_loaded
+    return
+  endif
+  var result = GetPrInfo(state.sha, state.host, state.repo)
+  state.pr_loaded = true
+  state.pr_lines = result.lines
+  state.pr_url = result.url
+enddef
+
+def Warn(message: string)
+  echohl WarningMsg
+  echomsg 'git-lineage: ' .. message
+  echohl None
+enddef
+
+def PopupFilter(id: number, key: string, state: dict<any>): bool
   if key == 'q' || key == "\<Esc>"
     popup_close(id)
     return true
   endif
 
-  if key == 'o'
-    if !empty(pr_url)
-      system('gh pr view ' .. shellescape(pr_url) .. ' --web')
+  if (key == 'p' || key == 'o') && !empty(state.host) && !empty(state.repo)
+    LoadPrInfo(state)
+    if key == 'p'
+      popup_settext(id, PopupLines(state))
+    elseif !empty(state.pr_url)
+      system('gh pr view ' .. shellescape(state.pr_url) .. ' --web')
       if v:shell_error != 0
-        echohl WarningMsg
-        echomsg 'git-lineage: Could not open the PR; check gh authentication and browser settings'
-        echohl None
+        Warn('Could not open the PR; check gh authentication and browser settings')
       endif
+    endif
+    return true
+  endif
+
+  if key == 'c' && !empty(state.host) && !empty(state.repo)
+    if !executable('gh')
+      Warn('Install gh to open commits on GitHub')
+      return true
+    endif
+    system('gh browse ' .. shellescape(state.sha)
+      .. ' --repo ' .. shellescape(state.host .. '/' .. state.repo))
+    if v:shell_error != 0
+      Warn('Could not open the commit; check gh authentication and browser settings')
     endif
     return true
   endif
@@ -134,14 +236,11 @@ def GetRepoInfo(git: string): list<string>
   return empty(matched) ? [] : [matched[1], matched[2]]
 enddef
 
-def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): string
-  if empty(host) || empty(repo)
-    return ''
-  endif
-  add(lines, '')
+def GetPrInfo(sha: string, host: string, repo: string): dict<any>
+  var result: dict<any> = {lines: [], url: ''}
   if !executable('gh')
-    add(lines, 'Install gh to show pull request information')
-    return ''
+    add(result.lines, 'Install gh to show pull request information')
+    return result
   endif
 
   var query =<< trim END
@@ -174,15 +273,12 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
   var query_text = join(query, "\n")
   var repo_parts = split(repo, '/')
   if len(repo_parts) != 2
-    return ''
+    return result
   endif
 
   var owner = repo_parts[0]
   var name = repo_parts[1]
 
-  # Passing the multiline query as a command-line argument makes system()
-  # generate an invalid temporary command file on Windows. Send the complete
-  # GraphQL request as JSON on stdin instead.
   var request = json_encode({
     query: query_text,
     variables: {
@@ -199,21 +295,22 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
   var output = trim(system(cmd, request))
 
   if v:shell_error != 0
-    add(lines, 'GitHub API error')
-    add(lines, 'Check gh authentication or API access for ' .. host)
-    return ''
+    add(result.lines, 'GitHub API error')
+    add(result.lines, 'Check gh authentication or API access for ' .. host)
+    return result
   endif
 
   if empty(output)
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
   var data: any
   try
     data = json_decode(output)
   catch
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endtry
   if type(data) != v:t_dict
       || type(get(data, 'data', 0)) != v:t_dict
@@ -221,8 +318,8 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
       || type(get(data.data.repository, 'object', 0)) != v:t_dict
       || type(get(data.data.repository.object, 'associatedPullRequests', 0)) != v:t_dict
       || type(get(data.data.repository.object.associatedPullRequests, 'nodes', 0)) != v:t_list
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
   var prs = data.data.repository.object.associatedPullRequests.nodes
@@ -230,8 +327,8 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
     !pr.repository.isFork || pr.repository.owner.login == owner
   )
   if empty(prs)
-    add(lines, 'No pull request found')
-    return ''
+    add(result.lines, 'No pull request found')
+    return result
   endif
 
   var pr = prs[0]
@@ -240,12 +337,13 @@ def AddPrInfo(lines: list<string>, sha: string, host: string, repo: string): str
       || get(pr, 'number', 0) <= 0
       || type(get(pr, 'title', 0)) != v:t_string
       || type(get(pr, 'url', 0)) != v:t_string
-    add(lines, 'Invalid GitHub API response')
-    return ''
+    add(result.lines, 'Invalid GitHub API response')
+    return result
   endif
 
-  add(lines, 'PR #' .. pr.number)
-  add(lines, 'Title: ' .. substitute(pr.title, '[\r\n\t]', ' ', 'g'))
-  add(lines, 'URL:   ' .. pr.url)
-  return pr.url
+  add(result.lines, 'PR #' .. pr.number)
+  add(result.lines, 'Title: ' .. substitute(pr.title, '[\r\n\t]', ' ', 'g'))
+  add(result.lines, 'URL:   ' .. pr.url)
+  result.url = pr.url
+  return result
 enddef

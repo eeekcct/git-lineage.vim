@@ -32,6 +32,33 @@ function! s:Response(value) abort
   call writefile([json_encode(a:value)], $GIT_LINEAGE_TEST_RESPONSE)
 endfunction
 
+function! s:CommandCount() abort
+  return filereadable($GIT_LINEAGE_TEST_LOG)
+        \ ? len(readfile($GIT_LINEAGE_TEST_LOG)) : 0
+endfunction
+
+function! s:WaitForCommands(count) abort
+  let start = reltime()
+  while s:CommandCount() < a:count
+    if reltimefloat(reltime(start)) >= 3
+      call assert_report('Timed out waiting for gh command count: ' . a:count)
+      return
+    endif
+    sleep 10m
+  endwhile
+endfunction
+
+function! s:WaitForMessage(pattern) abort
+  let start = reltime()
+  while execute('messages') !~ a:pattern
+    if reltimefloat(reltime(start)) >= 3
+      call assert_report('Timed out waiting for message: ' . a:pattern)
+      return
+    endif
+    sleep 10m
+  endwhile
+endfunction
+
 function! s:Run() abort
   call mkdir(s:temp . '/repo with spaces/sub dir', 'p')
   call mkdir(s:temp . '/bin', 'p')
@@ -42,6 +69,7 @@ function! s:Run() abort
   let $GIT_LINEAGE_TEST_LOG = s:temp . '/gh.log'
   let $GIT_LINEAGE_TEST_INPUT = s:temp . '/gh-input.json'
   let $GIT_LINEAGE_TEST_EXIT = '0'
+  let $GIT_LINEAGE_TEST_DELAY = ''
   if has('win32')
     let $GIT_LINEAGE_TEST_RESPONSE = substitute($GIT_LINEAGE_TEST_RESPONSE, '/', '\\', 'g')
     let $GIT_LINEAGE_TEST_INPUT = substitute($GIT_LINEAGE_TEST_INPUT, '/', '\\', 'g')
@@ -50,6 +78,7 @@ function! s:Run() abort
           \ '  more >"%GIT_LINEAGE_TEST_INPUT%"',
           \ '  type "%GIT_LINEAGE_TEST_RESPONSE%"',
           \ ')',
+          \ 'if not "%~1"=="api" if not "%GIT_LINEAGE_TEST_DELAY%"=="" ping 127.0.0.1 -n 3 >nul',
           \ 'exit /b %GIT_LINEAGE_TEST_EXIT%'], s:temp . '/bin/gh.cmd')
   else
     call writefile(['#!/bin/sh', 'printf ''%s\n'' "$*" >> "$GIT_LINEAGE_TEST_LOG"',
@@ -57,6 +86,7 @@ function! s:Run() abort
           \ '  cat > "$GIT_LINEAGE_TEST_INPUT"',
           \ '  cat "$GIT_LINEAGE_TEST_RESPONSE"',
           \ 'fi',
+          \ 'if [ "$1" != api ] && [ -n "$GIT_LINEAGE_TEST_DELAY" ]; then sleep 2; fi',
           \ 'exit "$GIT_LINEAGE_TEST_EXIT"'], s:temp . '/bin/gh')
     call setfperm(s:temp . '/bin/gh', 'rwx------')
   endif
@@ -119,7 +149,14 @@ function! s:Run() abort
   call assert_false(filereadable($GIT_LINEAGE_TEST_LOG), 'PR lookup is opt-in by default')
   let Filter = popup_getoptions(popup_list()[0]).filter
 
+  let command_count = s:CommandCount()
+  let $GIT_LINEAGE_TEST_DELAY = '1'
+  let browser_start = reltime()
   call assert_true(Filter(popup_list()[0], 'c'))
+  call assert_true(reltimefloat(reltime(browser_start)) < 1,
+        \ 'Opening a browser does not block Vim')
+  let $GIT_LINEAGE_TEST_DELAY = ''
+  call s:WaitForCommands(command_count + 1)
   call assert_match('browse .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   call assert_notmatch('browse --commit', readfile($GIT_LINEAGE_TEST_LOG)[-1])
 
@@ -145,8 +182,10 @@ function! s:Run() abort
   GitLineage
   let Filter = popup_getoptions(popup_list()[0]).filter
   call assert_equal(-1, index(s:Popup(), 'PR #42'))
+  let command_count = s:CommandCount()
   call assert_true(Filter(popup_list()[0], 'o'))
   call assert_equal(-1, index(s:Popup(), 'PR #42'), 'o does not change the popup')
+  call s:WaitForCommands(command_count + 2)
   call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   let command_count = len(readfile($GIT_LINEAGE_TEST_LOG))
   call assert_true(Filter(popup_list()[0], 'p'))
@@ -161,10 +200,13 @@ function! s:Run() abort
     call assert_true(index(s:Popup(), 'Title: Fix quoted "title"') >= 0)
   endfor
   let Filter = popup_getoptions(popup_list()[0]).filter
+  let command_count = s:CommandCount()
   call assert_true(Filter(popup_list()[0], 'o'))
+  call s:WaitForCommands(command_count + 1)
   call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   let $GIT_LINEAGE_TEST_EXIT = '1'
   call assert_true(Filter(popup_list()[0], 'o'))
+  call s:WaitForMessage('Could not open the PR')
   call assert_match('Could not open the PR', execute('messages'))
   GitLineage
   call assert_equal('Commit: ' . first_sha, s:Popup()[0])

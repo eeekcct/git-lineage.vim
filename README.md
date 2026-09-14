@@ -8,7 +8,8 @@ subject. Pull request details can be loaded from the popup when needed.
 
 ## Requirements
 
-- Vim 9.0 or later with `+vim9script` and `+popupwin` (Neovim is not supported).
+- Vim 9.0 or later with `+vim9script`, `+popupwin`, and `+job`
+  (Neovim is not supported).
 - [Git](https://git-scm.com/) on your `PATH`.
 - Optional: [GitHub CLI (`gh`)](https://cli.github.com/) on your `PATH`,
   to look up and open pull requests or open commits on GitHub.
@@ -81,9 +82,9 @@ let g:git_lineage_show_pr = 1
   The host must provide the GitHub API for PR lookup.
 - If GitHub returns several PRs for a commit, the first result is displayed.
   A commit without an associated PR still shows its commit information.
-- Git and GitHub CLI commands run synchronously. Large histories or a slow
-  network can delay PR lookup. A lookup is reused while the popup remains
-  open.
+- Git commands and GitHub API requests run synchronously. Large histories or
+  a slow network can delay PR lookup. Browser commands run in the background,
+  and a lookup is reused while the popup remains open.
 
 The popup uses the `GitLineagePopup` and `GitLineageBorder` highlight groups,
 linked to `Normal` and `Comment` by default. See `:help git-lineage` for details.

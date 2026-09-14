@@ -1,6 +1,7 @@
 vim9script
 
 var popup_id = 0
+var browser_jobs: list<job> = []
 
 export def Show()
   if popup_id != 0
@@ -166,6 +167,39 @@ def Warn(message: string)
   echohl None
 enddef
 
+def BrowserJobExited(browser_job: job, status: number, failure_message: string)
+  var job_index = index(browser_jobs, browser_job)
+  if job_index >= 0
+    remove(browser_jobs, job_index)
+  endif
+  if status != 0
+    Warn(failure_message)
+  endif
+enddef
+
+def StartBrowserCommand(arguments: list<string>, failure_message: string)
+  var command_arguments = copy(arguments)
+  var executable_path = exepath(command_arguments[0])
+  if !empty(executable_path)
+    command_arguments[0] = executable_path
+  endif
+  var command: any = command_arguments
+  if has('win32') && executable_path =~? '\.\%(cmd\|bat\)$'
+    command = [&shell, &shellcmdflag, join(arguments, ' ')]
+  endif
+  var browser_job = job_start(command, {
+    in_io: 'null',
+    out_io: 'null',
+    err_io: 'null',
+    exit_cb: (job, status) => BrowserJobExited(job, status, failure_message),
+  })
+  add(browser_jobs, browser_job)
+  if job_status(browser_job) == 'fail'
+    remove(browser_jobs, -1)
+    Warn(failure_message)
+  endif
+enddef
+
 def PopupFilter(id: number, key: string, state: dict<any>): bool
   if key == 'q' || key == "\<Esc>"
     popup_close(id)
@@ -177,10 +211,9 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
     if key == 'p'
       popup_settext(id, PopupLines(state))
     elseif !empty(state.pr_url)
-      system('gh pr view ' .. shellescape(state.pr_url) .. ' --web')
-      if v:shell_error != 0
-        Warn('Could not open the PR; check gh authentication and browser settings')
-      endif
+      StartBrowserCommand(
+        ['gh', 'pr', 'view', state.pr_url, '--web'],
+        'Could not open the PR; check gh authentication and browser settings')
     endif
     return true
   endif
@@ -190,11 +223,9 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
       Warn('Install gh to open commits on GitHub')
       return true
     endif
-    system('gh browse ' .. shellescape(state.sha)
-      .. ' --repo ' .. shellescape(state.host .. '/' .. state.repo))
-    if v:shell_error != 0
-      Warn('Could not open the commit; check gh authentication and browser settings')
-    endif
+    StartBrowserCommand(
+      ['gh', 'browse', state.sha, '--repo', state.host .. '/' .. state.repo],
+      'Could not open the commit; check gh authentication and browser settings')
     return true
   endif
   return false

@@ -16,7 +16,7 @@ CONTENTS                                                   *git-lineage*
 ==============================================================================
 REQUIREMENTS                                  *git-lineage-requirements*
 
-Vim 9.0 or later with +vim9script and +popupwin, and git on PATH.
+Vim 9.0 or later with +vim9script, +popupwin, and +job, and git on PATH.
 Neovim is not supported.
 
 GitHub CLI (gh) is optional. To look up and open pull requests or open commits
@@ -113,9 +113,10 @@ exists, gh is missing, or the API request fails, commit information is still
 shown. If opening a PR or commit fails, a warning is shown and the popup
 remains available.
 
-Commands run synchronously; large repositories or slow GitHub requests may
-delay PR lookup. Its result is reused while the popup remains open. There is no
-persistent cache or background lookup.
+Git commands and GitHub API requests run synchronously; large repositories or
+slow GitHub requests may delay PR lookup. Browser commands run in the
+background. A PR lookup result is reused while the popup remains open. There
+is no persistent cache or background lookup.
 
 ==============================================================================
 vim:tw=78:ts=8:noet:ft=help:norl:

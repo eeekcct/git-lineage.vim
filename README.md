@@ -4,7 +4,8 @@ See the commit behind the line under your cursor, then open its GitHub pull
 request without leaving Vim to search for it.
 
 Run `:GitLineage` to show a popup with the commit hash, author, date, and
-subject. Pull request details can be loaded from the popup when needed.
+subject. Git and GitHub lookups run in the background, and pull request
+details can be loaded from the popup when needed.
 
 ## Requirements
 
@@ -82,9 +83,10 @@ let g:git_lineage_show_pr = 1
   The host must provide the GitHub API for PR lookup.
 - If GitHub returns several PRs for a commit, the first result is displayed.
   A commit without an associated PR still shows its commit information.
-- Git commands and GitHub API requests run synchronously. Large histories or
-  a slow network can delay PR lookup. Browser commands run in the background,
-  and a lookup is reused while the popup remains open.
+- Git commands, GitHub API requests, and browser commands run in the
+  background. The popup shows a loading message while a lookup is in progress.
+  Closing the popup cancels its unfinished Git and GitHub API jobs. A PR lookup
+  is reused while the popup remains open; no persistent cache is maintained.
 
 The popup uses the `GitLineagePopup` and `GitLineageBorder` highlight groups,
 linked to `Normal` and `Comment` by default. See `:help git-lineage` for details.

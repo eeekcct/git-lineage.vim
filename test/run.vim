@@ -23,9 +23,31 @@ function! s:Git(args) abort
 endfunction
 
 function! s:Popup() abort
+  let start = reltime()
+  while 1
+    let ids = popup_list()
+    call assert_equal(1, len(ids), 'Exactly one lineage popup')
+    if empty(ids)
+      return []
+    endif
+    let lines = getbufline(winbufnr(ids[0]), 1, '$')
+    if index(lines, 'Loading commit information...') < 0
+          \ && index(lines, 'Loading pull request information...') < 0
+          \ && empty(filter(copy(lines), 'v:val =~# ''^Resolving repository'''))
+      return lines
+    endif
+    if reltimefloat(reltime(start)) >= 3
+      call assert_report('Timed out waiting for lineage popup: ' . string(lines))
+      return lines
+    endif
+    sleep 10m
+  endwhile
+endfunction
+
+function! s:PopupNow() abort
   let ids = popup_list()
   call assert_equal(1, len(ids), 'Exactly one lineage popup')
-  return getbufline(winbufnr(ids[0]), 1, '$')
+  return empty(ids) ? [] : getbufline(winbufnr(ids[0]), 1, '$')
 endfunction
 
 function! s:Response(value) abort
@@ -70,12 +92,14 @@ function! s:Run() abort
   let $GIT_LINEAGE_TEST_INPUT = s:temp . '/gh-input.json'
   let $GIT_LINEAGE_TEST_EXIT = '0'
   let $GIT_LINEAGE_TEST_DELAY = ''
+  let $GIT_LINEAGE_TEST_API_DELAY = ''
   if has('win32')
     let $GIT_LINEAGE_TEST_RESPONSE = substitute($GIT_LINEAGE_TEST_RESPONSE, '/', '\\', 'g')
     let $GIT_LINEAGE_TEST_INPUT = substitute($GIT_LINEAGE_TEST_INPUT, '/', '\\', 'g')
     call writefile(['@echo off', 'echo %*>>"%GIT_LINEAGE_TEST_LOG%"',
           \ 'if "%~1"=="api" (',
           \ '  more >"%GIT_LINEAGE_TEST_INPUT%"',
+          \ '  if not "%GIT_LINEAGE_TEST_API_DELAY%"=="" ping 127.0.0.1 -n 3 >nul',
           \ '  type "%GIT_LINEAGE_TEST_RESPONSE%"',
           \ ')',
           \ 'if not "%~1"=="api" if not "%GIT_LINEAGE_TEST_DELAY%"=="" ping 127.0.0.1 -n 3 >nul',
@@ -84,6 +108,7 @@ function! s:Run() abort
     call writefile(['#!/bin/sh', 'printf ''%s\n'' "$*" >> "$GIT_LINEAGE_TEST_LOG"',
           \ 'if [ "$1" = api ]; then',
           \ '  cat > "$GIT_LINEAGE_TEST_INPUT"',
+          \ '  if [ -n "$GIT_LINEAGE_TEST_API_DELAY" ]; then sleep 2; fi',
           \ '  cat "$GIT_LINEAGE_TEST_RESPONSE"',
           \ 'fi',
           \ 'if [ "$1" != api ] && [ -n "$GIT_LINEAGE_TEST_DELAY" ]; then sleep 2; fi',
@@ -160,7 +185,13 @@ function! s:Run() abort
   call assert_match('browse .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   call assert_notmatch('browse --commit', readfile($GIT_LINEAGE_TEST_LOG)[-1])
 
+  let $GIT_LINEAGE_TEST_API_DELAY = '1'
+  let api_start = reltime()
   call assert_true(Filter(popup_list()[0], 'p'))
+  call assert_true(reltimefloat(reltime(api_start)) < 1,
+        \ 'PR lookup does not block Vim')
+  call assert_true(index(s:PopupNow(), 'Loading pull request information...') >= 0)
+  let $GIT_LINEAGE_TEST_API_DELAY = ''
   call assert_true(index(s:Popup(), 'No pull request found') >= 0, string(s:Popup()))
   let request = json_decode(join(readfile($GIT_LINEAGE_TEST_INPUT), "\n"))
   call assert_equal('owner', request.variables.owner)
@@ -226,9 +257,11 @@ function! s:Run() abort
   call s:Git('config branch.main.remote team/upstream')
   call s:Git('config branch.main.merge refs/heads/main')
   GitLineage
+  call s:Popup()
   call assert_match('--hostname .*ghe.example.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   call s:Git('checkout --detach')
   GitLineage
+  call s:Popup()
   call assert_match('--hostname .*github.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
   unlet g:git_lineage_show_pr
 
@@ -270,15 +303,16 @@ function! s:Run() abort
 
   " Retain Git access while hiding gh, independently of installed user tools.
   let git_exe = exepath('git')
-  call mkdir(s:temp . '/git-only')
   if has('win32')
-    call writefile(['@echo off', '@"' . git_exe . '" %*'], s:temp . '/git-only/git.cmd')
+    let git_only_path = fnamemodify(git_exe, ':h')
   else
+    call mkdir(s:temp . '/git-only')
     call writefile(['#!/bin/sh', 'exec ' . shellescape(git_exe) . ' "$@"'], s:temp . '/git-only/git')
     call setfperm(s:temp . '/git-only/git', 'rwx------')
+    let git_only_path = s:temp . '/git-only'
   endif
   let fixture_path = $PATH
-  let $PATH = s:temp . '/git-only'
+  let $PATH = git_only_path
   call assert_false(executable('gh'))
   GitLineage
   call assert_equal(-1, index(s:Popup(), 'Install gh to show pull request information'))
@@ -293,11 +327,45 @@ function! s:Run() abort
 
   call writefile(['untracked'], s:temp . '/repo with spaces/untracked.txt')
   execute 'edit ' . fnameescape(s:temp . '/repo with spaces/untracked.txt')
-  silent! call assert_fails('GitLineage', 'git-lineage: git blame failed')
+  GitLineage
+  call assert_equal('Error: git blame failed; the file must be tracked with committed history', s:Popup()[0])
   execute 'edit ' . fnameescape(s:temp . '/outside.txt')
-  silent! call assert_fails('GitLineage', 'git-lineage: Not inside a Git repository')
+  GitLineage
+  call assert_equal('Error: Not inside a Git repository', s:Popup()[0])
   setlocal buftype=nofile
   silent! call assert_fails('GitLineage', 'git-lineage: Open a file first')
+
+  " A slow git process leaves Vim responsive and initially shows a loading popup.
+  let slow_git_dir = s:temp . '/slow-git'
+  call mkdir(slow_git_dir)
+  let slow_sha = repeat('a', 40)
+  if has('win32')
+    call writefile(['@echo off',
+          \ 'if not "%GIT_LINEAGE_TEST_GIT_DELAY%"=="" ping 127.0.0.1 -n 3 >nul',
+          \ 'echo ' . slow_sha . ' 1 1 1',
+          \ 'echo author Async Test',
+          \ 'echo author-time 946684800',
+          \ 'echo author-tz +0000',
+          \ 'echo summary Slow blame',
+          \ 'echo filename example.txt'], slow_git_dir . '/git.cmd')
+  else
+    call writefile(['#!/bin/sh',
+          \ 'if [ -n "$GIT_LINEAGE_TEST_GIT_DELAY" ]; then sleep 2; fi',
+          \ 'printf ''%s\n'' "' . slow_sha . ' 1 1 1" "author Async Test" "author-time 946684800" "author-tz +0000" "summary Slow blame" "filename example.txt"'], slow_git_dir . '/git')
+    call setfperm(slow_git_dir . '/git', 'rwx------')
+  endif
+  let $PATH = slow_git_dir . (has('win32') ? ';' : ':') . fixture_path
+  let $GIT_LINEAGE_TEST_GIT_DELAY = '1'
+  setlocal buftype=
+  execute 'edit ' . fnameescape(file)
+  let blame_start = reltime()
+  GitLineage
+  call assert_true(reltimefloat(reltime(blame_start)) < 1,
+        \ 'git blame does not block Vim')
+  call assert_equal('Loading commit information...', s:PopupNow()[0])
+  let $GIT_LINEAGE_TEST_GIT_DELAY = ''
+  call assert_equal('Commit: aaaaaaa', s:Popup()[0])
+  let $PATH = fixture_path
 
   " Generate help tags in the fixture, leaving the working tree clean.
   call mkdir(s:temp . '/doc')

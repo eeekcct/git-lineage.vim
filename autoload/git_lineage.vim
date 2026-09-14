@@ -3,6 +3,115 @@ vim9script
 var popup_id = 0
 var browser_jobs: list<job> = []
 
+def CommandOutput(context: dict<any>, channel: channel, message: string)
+  add(context.stdout, substitute(message, '\r$', '', ''))
+enddef
+
+def FinishCommand(context: dict<any>)
+  if context.finished || !context.exited || !context.closed
+    return
+  endif
+  context.finished = true
+  context.callback(context)
+enddef
+
+def CommandExited(context: dict<any>, command_job: job, status: number)
+  context.status = status
+  context.exited = true
+  FinishCommand(context)
+enddef
+
+def CommandClosed(context: dict<any>, channel: channel)
+  context.closed = true
+  FinishCommand(context)
+enddef
+
+def PrepareCommand(arguments: list<string>): any
+  var command_arguments = copy(arguments)
+  var executable_path = exepath(command_arguments[0])
+  if has('win32') && executable_path =~? '\.\%(cmd\|bat\)$'
+    return [&shell, &shellcmdflag, join(arguments, ' ')]
+  endif
+  if !empty(executable_path)
+    command_arguments[0] = executable_path
+  endif
+  return command_arguments
+enddef
+
+def StartCommand(arguments: list<string>, input: string, Callback: func): job
+  var context: dict<any> = {
+    stdout: [],
+    status: -1,
+    exited: false,
+    closed: false,
+    finished: false,
+    callback: Callback,
+  }
+  var command_job = job_start(PrepareCommand(arguments), {
+    in_io: empty(input) ? 'null' : 'pipe',
+    out_io: 'pipe',
+    err_io: 'null',
+    out_mode: 'nl',
+    out_cb: (channel, message) => CommandOutput(context, channel, message),
+    exit_cb: (job, status) => CommandExited(context, job, status),
+    close_cb: (channel) => CommandClosed(context, channel),
+  })
+
+  if job_status(command_job) == 'fail'
+    context.exited = true
+    context.closed = true
+    FinishCommand(context)
+  elseif !empty(input)
+    var channel = job_getchannel(command_job)
+    ch_sendraw(channel, input)
+    ch_close_in(channel)
+  endif
+  return command_job
+enddef
+
+def StateIsOpen(state: dict<any>): bool
+  return !state.closed && popup_id == state.popup_id
+enddef
+
+def UpdatePopup(state: dict<any>)
+  if StateIsOpen(state)
+    popup_settext(state.popup_id, PopupLines(state))
+  endif
+enddef
+
+def StartStateCommand(state: dict<any>, arguments: list<string>, input: string, Callback: func)
+  var command_job = StartCommand(arguments, input, Callback)
+  add(state.jobs, command_job)
+enddef
+
+def CancelStateJobs(state: dict<any>)
+  for command_job in state.jobs
+    if job_status(command_job) == 'run'
+      job_stop(command_job)
+    endif
+  endfor
+enddef
+
+def PopupClosed(id: number, result: number, state: dict<any>)
+  state.closed = true
+  CancelStateJobs(state)
+  if popup_id == id
+    popup_id = 0
+  endif
+enddef
+
+def FailState(state: dict<any>, message: string)
+  if !StateIsOpen(state)
+    return
+  endif
+  state.loading = false
+  state.repo_loading = false
+  state.repo_loaded = true
+  state.commit_lines = ['Error: ' .. message]
+  Warn(message)
+  UpdatePopup(state)
+enddef
+
 export def Show()
   if popup_id != 0
     popup_close(popup_id)
@@ -20,54 +129,28 @@ export def Show()
     return
   endif
 
-  var git = 'git --literal-pathspecs -C ' .. shellescape(fnamemodify(file, ':h'))
+  var git = ['git', '--no-pager', '--literal-pathspecs',
+    '-C', fnamemodify(file, ':h')]
   var lnum = line('.')
-  var blame_cmd = git .. ' blame --porcelain -L ' .. lnum .. ',' .. lnum
-    .. ' -- ' .. shellescape(fnamemodify(file, ':t'))
-  var blame = systemlist(blame_cmd)
-  if v:shell_error != 0 || empty(blame)
-    var repo_check = system(git .. ' rev-parse --is-inside-work-tree')
-    if v:shell_error != 0 || trim(repo_check) != 'true'
-      echoerr 'git-lineage: Not inside a Git repository'
-      return
-    endif
-    echoerr 'git-lineage: git blame failed; the file must be tracked with committed history'
-    return
-  endif
-
-  var sha = split(blame[0])[0]
-  if sha =~ '^0\+$'
-    echoerr 'git-lineage: Current line is not committed yet'
-    return
-  endif
-
-  var commit = ParseBlame(blame, sha)
-  if empty(commit)
-    echoerr 'git-lineage: Invalid git blame output'
-    return
-  endif
-  var lines = [
-    'Commit: ' .. strpart(sha, 0, 7),
-    'Author: ' .. commit.author,
-    'Date:   ' .. AuthorDate(commit.author_time, commit.author_tz),
-    'Title:  ' .. commit.summary,
-  ]
-
-  var repo_info = GetRepoInfo(git)
-  var host = get(repo_info, 0, '')
-  var repo = get(repo_info, 1, '')
   var state: dict<any> = {
-    commit_lines: lines,
-    sha: sha,
-    host: host,
-    repo: repo,
+    commit_lines: [],
+    sha: '',
+    host: '',
+    repo: '',
+    git: git,
+    loading: true,
+    repo_loading: false,
+    repo_loaded: false,
     pr_loaded: false,
+    pr_loading: false,
     pr_lines: [],
     pr_url: '',
+    open_pr_when_loaded: false,
+    show_pr_when_loaded: false,
+    jobs: [],
+    closed: false,
+    popup_id: 0,
   }
-  if get(g:, 'git_lineage_show_pr', false) && !empty(host) && !empty(repo)
-    LoadPrInfo(state)
-  endif
 
   popup_id = popup_atcursor(PopupLines(state), {
     'pos': 'botleft',
@@ -80,9 +163,59 @@ export def Show()
     'borderhighlight': ['GitLineageBorder'],
     'close': 'click',
     'moved': 'any',
+    'callback': (id, result) => PopupClosed(id, result, state),
     'filtermode': 'n',
     'filter': (id, key) => PopupFilter(id, key, state),
   })
+  state.popup_id = popup_id
+  var blame_arguments = git + ['blame', '--porcelain',
+    '-L', lnum .. ',' .. lnum, '--', fnamemodify(file, ':t')]
+  StartStateCommand(state, blame_arguments, '',
+    (context) => BlameExited(state, context))
+enddef
+
+def BlameExited(state: dict<any>, context: dict<any>)
+  if !StateIsOpen(state)
+    return
+  endif
+  if context.status != 0 || empty(context.stdout)
+    StartStateCommand(state, state.git + ['rev-parse', '--is-inside-work-tree'], '',
+      (repo_context) => RepoCheckExited(state, repo_context))
+    return
+  endif
+
+  var sha = split(context.stdout[0])[0]
+  if sha =~ '^0\+$'
+    FailState(state, 'Current line is not committed yet')
+    return
+  endif
+
+  var commit = ParseBlame(context.stdout, sha)
+  if empty(commit)
+    FailState(state, 'Invalid git blame output')
+    return
+  endif
+
+  state.sha = sha
+  state.commit_lines = [
+    'Commit: ' .. strpart(sha, 0, 7),
+    'Author: ' .. commit.author,
+    'Date:   ' .. AuthorDate(commit.author_time, commit.author_tz),
+    'Title:  ' .. commit.summary,
+  ]
+  state.loading = false
+  UpdatePopup(state)
+  StartRepoInfo(state)
+enddef
+
+def RepoCheckExited(state: dict<any>, context: dict<any>)
+  if context.status != 0 || empty(context.stdout)
+      || trim(context.stdout[0]) != 'true'
+    FailState(state, 'Not inside a Git repository')
+  else
+    FailState(state,
+      'git blame failed; the file must be tracked with committed history')
+  endif
 enddef
 
 def ParseBlame(lines: list<string>, sha: string): dict<string>
@@ -137,13 +270,22 @@ def AuthorDate(timestamp: string, timezone: string): string
 enddef
 
 def PopupLines(state: dict<any>): list<string>
+  if state.loading
+    return ['Loading commit information...', '', 'q/Esc: close']
+  endif
+
   var lines = copy(state.commit_lines)
-  if state.pr_loaded && !empty(state.pr_lines)
+  if state.pr_loading && state.show_pr_when_loaded
+    add(lines, '')
+    add(lines, 'Loading pull request information...')
+  elseif state.pr_loaded && state.show_pr_when_loaded && !empty(state.pr_lines)
     add(lines, '')
     extend(lines, state.pr_lines)
   endif
   add(lines, '')
-  if !empty(state.host) && !empty(state.repo)
+  if state.repo_loading
+    add(lines, 'Resolving repository... | q/Esc: close')
+  elseif !empty(state.host) && !empty(state.repo)
     add(lines, 'p: show PR | o: open PR | c: open commit | q/Esc: close')
   else
     add(lines, 'q/Esc: close')
@@ -151,127 +293,41 @@ def PopupLines(state: dict<any>): list<string>
   return lines
 enddef
 
-def LoadPrInfo(state: dict<any>)
+def LoadPrInfo(state: dict<any>, open_when_loaded: bool = false,
+    show_when_loaded: bool = false)
+  if open_when_loaded
+    state.open_pr_when_loaded = true
+  endif
+  if show_when_loaded
+    state.show_pr_when_loaded = true
+  endif
   if state.pr_loaded
-    return
-  endif
-  var result = GetPrInfo(state.sha, state.host, state.repo)
-  state.pr_loaded = true
-  state.pr_lines = result.lines
-  state.pr_url = result.url
-enddef
-
-def Warn(message: string)
-  echohl WarningMsg
-  echomsg 'git-lineage: ' .. message
-  echohl None
-enddef
-
-def BrowserJobExited(browser_job: job, status: number, failure_message: string)
-  var job_index = index(browser_jobs, browser_job)
-  if job_index >= 0
-    remove(browser_jobs, job_index)
-  endif
-  if status != 0
-    Warn(failure_message)
-  endif
-enddef
-
-def StartBrowserCommand(arguments: list<string>, failure_message: string)
-  var command_arguments = copy(arguments)
-  var executable_path = exepath(command_arguments[0])
-  if !empty(executable_path)
-    command_arguments[0] = executable_path
-  endif
-  var command: any = command_arguments
-  if has('win32') && executable_path =~? '\.\%(cmd\|bat\)$'
-    command = [&shell, &shellcmdflag, join(arguments, ' ')]
-  endif
-  var browser_job = job_start(command, {
-    in_io: 'null',
-    out_io: 'null',
-    err_io: 'null',
-    exit_cb: (job, status) => BrowserJobExited(job, status, failure_message),
-  })
-  add(browser_jobs, browser_job)
-  if job_status(browser_job) == 'fail'
-    remove(browser_jobs, -1)
-    Warn(failure_message)
-  endif
-enddef
-
-def PopupFilter(id: number, key: string, state: dict<any>): bool
-  if key == 'q' || key == "\<Esc>"
-    popup_close(id)
-    return true
-  endif
-
-  if (key == 'p' || key == 'o') && !empty(state.host) && !empty(state.repo)
-    LoadPrInfo(state)
-    if key == 'p'
-      popup_settext(id, PopupLines(state))
-    elseif !empty(state.pr_url)
+    if show_when_loaded
+      UpdatePopup(state)
+    endif
+    if open_when_loaded && !empty(state.pr_url)
       StartBrowserCommand(
         ['gh', 'pr', 'view', state.pr_url, '--web'],
         'Could not open the PR; check gh authentication and browser settings')
     endif
-    return true
+    return
   endif
-
-  if key == 'c' && !empty(state.host) && !empty(state.repo)
-    if !executable('gh')
-      Warn('Install gh to open commits on GitHub')
-      return true
-    endif
-    StartBrowserCommand(
-      ['gh', 'browse', state.sha, '--repo', state.host .. '/' .. state.repo],
-      'Could not open the commit; check gh authentication and browser settings')
-    return true
+  if state.pr_loading
+    return
   endif
-  return false
-enddef
-
-def GetRemoteName(git: string): string
-  var branch = trim(system(git .. ' symbolic-ref --quiet --short HEAD'))
-  if v:shell_error == 0 && !empty(branch)
-    var remote = trim(system(git .. ' config --get ' .. shellescape('branch.' .. branch .. '.remote')))
-    if v:shell_error == 0 && !empty(remote) && remote != '.'
-      return remote
-    endif
-  endif
-
-  var remotes = systemlist(git .. ' remote')
-  return index(remotes, 'origin') >= 0 ? 'origin' : ''
-enddef
-
-def GetRepoInfo(git: string): list<string>
-  var remote_name = GetRemoteName(git)
-  if empty(remote_name)
-    return []
-  endif
-
-  var remote = trim(system(git .. ' remote get-url ' .. shellescape(remote_name)))
-  if v:shell_error != 0 || empty(remote)
-    return []
-  endif
-  remote = substitute(remote, '/\+$', '', '')
-  remote = substitute(remote, '\.git$', '', '')
-
-  var matched = matchlist(remote, '^git@\([^/:]\+\):\([^/]\+/[^/]\+\)$')
-  if empty(matched)
-    matched = matchlist(remote, '^https://\([^/@:]\+\)/\([^/]\+/[^/]\+\)$')
-  endif
-  if empty(matched)
-    matched = matchlist(remote, '^ssh://git@\([^/:]\+\)\%(:[0-9]\+\)\?/\([^/]\+/[^/]\+\)$')
-  endif
-  return empty(matched) ? [] : [matched[1], matched[2]]
-enddef
-
-def GetPrInfo(sha: string, host: string, repo: string): dict<any>
-  var result: dict<any> = {lines: [], url: ''}
   if !executable('gh')
-    add(result.lines, 'Install gh to show pull request information')
-    return result
+    state.pr_loaded = true
+    state.pr_lines = ['Install gh to show pull request information']
+    if state.show_pr_when_loaded
+      UpdatePopup(state)
+    endif
+    return
+  endif
+
+  var repo_parts = split(state.repo, '/')
+  if len(repo_parts) != 2
+    state.pr_loaded = true
+    return
   endif
 
   var query =<< trim END
@@ -300,37 +356,186 @@ def GetPrInfo(sha: string, host: string, repo: string): dict<any>
     }
   }
   END
-
-  var query_text = join(query, "\n")
-  var repo_parts = split(repo, '/')
-  if len(repo_parts) != 2
-    return result
-  endif
-
-  var owner = repo_parts[0]
-  var name = repo_parts[1]
-
   var request = json_encode({
-    query: query_text,
+    query: join(query, "\n"),
     variables: {
-      owner: owner,
-      name: name,
-      sha: sha,
+      owner: repo_parts[0],
+      name: repo_parts[1],
+      sha: state.sha,
     },
   })
-  var cmd = 'gh api graphql'
-    .. ' --hostname ' .. shellescape(host)
-    .. ' --method POST'
-    .. ' --input -'
+  state.pr_loading = true
+  if state.show_pr_when_loaded
+    UpdatePopup(state)
+  endif
+  StartStateCommand(state, [
+    'gh', 'api', 'graphql',
+    '--hostname', state.host,
+    '--method', 'POST',
+    '--input', '-',
+  ], request, (context) => PrInfoExited(state, repo_parts[0], context))
+enddef
 
-  var output = trim(system(cmd, request))
+def PrInfoExited(state: dict<any>, owner: string, context: dict<any>)
+  if !StateIsOpen(state)
+    return
+  endif
+  var result = ParsePrInfo(
+    join(context.stdout, "\n"), context.status, owner, state.host)
+  state.pr_loading = false
+  state.pr_loaded = true
+  state.pr_lines = result.lines
+  state.pr_url = result.url
+  if state.show_pr_when_loaded
+    UpdatePopup(state)
+  endif
+  if state.open_pr_when_loaded && !empty(state.pr_url)
+    StartBrowserCommand(
+      ['gh', 'pr', 'view', state.pr_url, '--web'],
+      'Could not open the PR; check gh authentication and browser settings')
+  endif
+enddef
 
-  if v:shell_error != 0
+def Warn(message: string)
+  echohl WarningMsg
+  echomsg 'git-lineage: ' .. message
+  echohl None
+enddef
+
+def BrowserJobExited(browser_job: job, status: number, failure_message: string)
+  var job_index = index(browser_jobs, browser_job)
+  if job_index >= 0
+    remove(browser_jobs, job_index)
+  endif
+  if status != 0
+    Warn(failure_message)
+  endif
+enddef
+
+def StartBrowserCommand(arguments: list<string>, failure_message: string)
+  var browser_job = job_start(PrepareCommand(arguments), {
+    in_io: 'null',
+    out_io: 'null',
+    err_io: 'null',
+    exit_cb: (job, status) => BrowserJobExited(job, status, failure_message),
+  })
+  add(browser_jobs, browser_job)
+  if job_status(browser_job) == 'fail'
+    remove(browser_jobs, -1)
+    Warn(failure_message)
+  endif
+enddef
+
+def PopupFilter(id: number, key: string, state: dict<any>): bool
+  if key == 'q' || key == "\<Esc>"
+    popup_close(id)
+    return true
+  endif
+
+  if (key == 'p' || key == 'o') && !empty(state.host) && !empty(state.repo)
+    LoadPrInfo(state, key == 'o', key == 'p')
+    return true
+  endif
+
+  if key == 'c' && !empty(state.host) && !empty(state.repo)
+    if !executable('gh')
+      Warn('Install gh to open commits on GitHub')
+      return true
+    endif
+    StartBrowserCommand(
+      ['gh', 'browse', state.sha, '--repo', state.host .. '/' .. state.repo],
+      'Could not open the commit; check gh authentication and browser settings')
+    return true
+  endif
+  return false
+enddef
+
+def StartRepoInfo(state: dict<any>)
+  if !StateIsOpen(state)
+    return
+  endif
+  state.repo_loading = true
+  UpdatePopup(state)
+  StartStateCommand(state, state.git
+    + ['symbolic-ref', '--quiet', '--short', 'HEAD'], '',
+    (context) => BranchExited(state, context))
+enddef
+
+def BranchExited(state: dict<any>, context: dict<any>)
+  if !StateIsOpen(state)
+    return
+  endif
+  state.branch = context.status == 0 && !empty(context.stdout)
+    ? trim(context.stdout[0]) : ''
+  StartStateCommand(state, state.git + [
+    'config', '--get-regexp', '^(branch\..*\.remote|remote\..*\.url)$',
+  ], '', (config_context) => RepoConfigExited(state, config_context))
+enddef
+
+def RepoConfigExited(state: dict<any>, context: dict<any>)
+  if !StateIsOpen(state)
+    return
+  endif
+
+  var branch_remote = ''
+  var remote_urls: dict<string> = {}
+  for config_line in context.stdout
+    var separator = stridx(config_line, ' ')
+    if separator <= 0
+      continue
+    endif
+    var key = strpart(config_line, 0, separator)
+    var value = strpart(config_line, separator + 1)
+    if !empty(state.branch) && key == 'branch.' .. state.branch .. '.remote'
+      branch_remote = value
+    elseif key =~ '^remote\..*\.url$'
+      var remote_name = strpart(key, 7, strlen(key) - 11)
+      if !has_key(remote_urls, remote_name)
+        remote_urls[remote_name] = value
+      endif
+    endif
+  endfor
+
+  var remote_name = !empty(branch_remote) && branch_remote != '.'
+    ? branch_remote : (has_key(remote_urls, 'origin') ? 'origin' : '')
+  var repo_info = empty(remote_name) || !has_key(remote_urls, remote_name)
+    ? [] : ParseRemoteUrl(remote_urls[remote_name])
+  state.host = get(repo_info, 0, '')
+  state.repo = get(repo_info, 1, '')
+  state.repo_loading = false
+  state.repo_loaded = true
+  UpdatePopup(state)
+  if get(g:, 'git_lineage_show_pr', false)
+      && !empty(state.host) && !empty(state.repo)
+    LoadPrInfo(state, false, true)
+  endif
+enddef
+
+def ParseRemoteUrl(url: string): list<string>
+  var remote = url
+  remote = substitute(remote, '/\+$', '', '')
+  remote = substitute(remote, '\.git$', '', '')
+
+  var matched = matchlist(remote, '^git@\([^/:]\+\):\([^/]\+/[^/]\+\)$')
+  if empty(matched)
+    matched = matchlist(remote, '^https://\([^/@:]\+\)/\([^/]\+/[^/]\+\)$')
+  endif
+  if empty(matched)
+    matched = matchlist(remote, '^ssh://git@\([^/:]\+\)\%(:[0-9]\+\)\?/\([^/]\+/[^/]\+\)$')
+  endif
+  return empty(matched) ? [] : [matched[1], matched[2]]
+enddef
+
+def ParsePrInfo(output_text: string, status: number, owner: string,
+    host: string): dict<any>
+  var result: dict<any> = {lines: [], url: ''}
+  if status != 0
     add(result.lines, 'GitHub API error')
     add(result.lines, 'Check gh authentication or API access for ' .. host)
     return result
   endif
 
+  var output = trim(output_text)
   if empty(output)
     add(result.lines, 'Invalid GitHub API response')
     return result

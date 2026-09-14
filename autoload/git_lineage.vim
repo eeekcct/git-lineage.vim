@@ -178,8 +178,13 @@ def BrowserJobExited(browser_job: job, status: number, failure_message: string)
 enddef
 
 def StartBrowserCommand(arguments: list<string>, failure_message: string)
-  var command: any = arguments
-  if has('win32')
+  var command_arguments = copy(arguments)
+  var executable_path = exepath(command_arguments[0])
+  if !empty(executable_path)
+    command_arguments[0] = executable_path
+  endif
+  var command: any = command_arguments
+  if has('win32') && executable_path =~? '\.\%(cmd\|bat\)$'
     command = [&shell, &shellcmdflag, join(arguments, ' ')]
   endif
   var browser_job = job_start(command, {

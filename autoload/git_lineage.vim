@@ -177,8 +177,12 @@ def BrowserJobExited(browser_job: job, status: number, failure_message: string)
   endif
 enddef
 
-def StartBrowserCommand(command: string, failure_message: string)
-  var browser_job = job_start([&shell, &shellcmdflag, command], {
+def StartBrowserCommand(arguments: list<string>, failure_message: string)
+  var command: any = arguments
+  if has('win32')
+    command = [&shell, &shellcmdflag, join(arguments, ' ')]
+  endif
+  var browser_job = job_start(command, {
     in_io: 'null',
     out_io: 'null',
     err_io: 'null',
@@ -203,7 +207,7 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
       popup_settext(id, PopupLines(state))
     elseif !empty(state.pr_url)
       StartBrowserCommand(
-        'gh pr view ' .. shellescape(state.pr_url) .. ' --web',
+        ['gh', 'pr', 'view', state.pr_url, '--web'],
         'Could not open the PR; check gh authentication and browser settings')
     endif
     return true
@@ -215,8 +219,7 @@ def PopupFilter(id: number, key: string, state: dict<any>): bool
       return true
     endif
     StartBrowserCommand(
-      'gh browse ' .. shellescape(state.sha)
-        .. ' --repo ' .. shellescape(state.host .. '/' .. state.repo),
+      ['gh', 'browse', state.sha, '--repo', state.host .. '/' .. state.repo],
       'Could not open the commit; check gh authentication and browser settings')
     return true
   endif

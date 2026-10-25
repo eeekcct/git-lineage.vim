@@ -3,3 +3,7 @@
 *.swp
 *.swo
 *~
+
+/test-command-errors.log
+/test-windows-errors.log
+/test/argv-recorder.exe

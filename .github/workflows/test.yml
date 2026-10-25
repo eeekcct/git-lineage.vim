@@ -17,8 +17,39 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y vim
       - name: Run regression tests
         run: vim -Nu NONE -i NONE -n -es -S test/run.vim
+      - name: Run command encoding tests
+        run: vim -Nu NONE -i NONE -n -es -S test/command.vim
       - name: Show test failures
         if: failure()
-        run: cat test-errors.log 2>/dev/null || true
+        run: cat test*-errors.log 2>/dev/null || true
       - name: Check whitespace
         run: git show --format= --check HEAD
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install native Windows Vim
+        shell: pwsh
+        run: |
+          choco install vim --version=9.2.1229 --yes --no-progress
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $vim = Get-ChildItem 'C:\tools', 'C:\Program Files\Vim' -Filter vim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $vim) { throw 'Native Windows Vim not found' }
+          "VIM_EXE=$($vim.FullName)" >> $env:GITHUB_ENV
+      - name: Build local argument recorder
+        shell: powershell
+        run: ./test/build-argv-recorder.ps1
+      - name: Run regression tests
+        shell: pwsh
+        run: |
+          & $env:VIM_EXE -Nu NONE -i NONE -n -es -S test/run.vim
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $env:VIM_EXE -Nu NONE -i NONE -n -es -S test/command.vim
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $env:VIM_EXE -Nu NONE -i NONE -n -es -S test/windows-command.vim
+          exit $LASTEXITCODE
+      - name: Show test failures
+        if: failure()
+        shell: pwsh
+        run: Get-Content test*-errors.log -ErrorAction SilentlyContinue

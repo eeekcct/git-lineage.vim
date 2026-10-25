@@ -23,6 +23,14 @@ GitHub CLI (gh) is optional. To look up and open pull requests or open commits
 on GitHub, gh must be on PATH with authentication configured for the target
 repository. Commit information works without gh.
 
+Windows supports native executables and trusted .cmd/.bat wrappers. Batch jobs
+use cmd.exe rather than Vim's 'shell', with AutoRun and delayed expansion off.
+The wrapper must forward %* without CALL, another cmd /c, delayed expansion, or
+reconstructing arguments. Extra parsing inside a wrapper is not protected.
+Quotes/control characters and oversized batch arguments are rejected; ordinary
+spaces and shell metacharacters are passed as data. Native executable arguments
+are unchanged.
+
 Authentication is handled by gh. You can use "gh auth login" or environment
 variables such as GH_TOKEN / GITHUB_TOKEN. For GitHub Enterprise Server, use
 "gh auth login --hostname YOUR_HOST" or GH_ENTERPRISE_TOKEN /

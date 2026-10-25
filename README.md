@@ -17,6 +17,15 @@ details can be loaded from the popup when needed.
 
 Commit information works without `gh`.
 
+On Windows, native executables and trusted `.cmd`/`.bat` wrappers are supported.
+Batch wrappers are launched with `cmd.exe`, independently of Vim's `shell`, with
+AutoRun and delayed expansion disabled. Arguments are passed through a job-local
+environment so spaces and shell metacharacters remain data. A wrapper must
+forward `%*` without `CALL`, another `cmd /c`, delayed expansion, or reconstructing
+arguments. Such additional parsing is outside this protection. Batch arguments
+containing double quotes/control characters, or exceeding the safe command-line
+length, are rejected with an error; native executable arguments are unchanged.
+
 Authentication is handled by `gh`. See `:help git-lineage-requirements`
 for details.
 
@@ -98,6 +107,12 @@ Run the regression tests from the repository root:
 ```sh
 vim -Nu NONE -i NONE -n -es -S test/run.vim
 ```
+
+The CI also runs native Windows Vim, including `.cmd`/`.bat` forwarding tests
+that compare a local recorder's actual arguments and check for command-injection
+side effects. `test/command.vim` tests encoding and rejection on either platform;
+`test/windows-command.vim` requires the recorder built by
+`test/build-argv-recorder.ps1` (Windows PowerShell).
 
 Tests create temporary Git repositories and a fake `gh` command. They do not
 access GitHub or launch a browser. Failures are written to `test-errors.log`.

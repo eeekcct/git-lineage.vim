@@ -182,8 +182,8 @@ function! s:Run() abort
         \ 'Opening a browser does not block Vim')
   let $GIT_LINEAGE_TEST_DELAY = ''
   call s:WaitForCommands(command_count + 1)
-  call assert_match('browse .* --repo .*github.com/owner/repo', readfile($GIT_LINEAGE_TEST_LOG)[-1])
-  call assert_notmatch('browse --commit', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('browse .* --repo .*github.com/owner/repo', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
+  call assert_notmatch('browse --commit', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
 
   let $GIT_LINEAGE_TEST_API_DELAY = '1'
   let api_start = reltime()
@@ -217,7 +217,7 @@ function! s:Run() abort
   call assert_true(Filter(popup_list()[0], 'o'))
   call assert_equal(-1, index(s:Popup(), 'PR #42'), 'o does not change the popup')
   call s:WaitForCommands(command_count + 2)
-  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
   let command_count = len(readfile($GIT_LINEAGE_TEST_LOG))
   call assert_true(Filter(popup_list()[0], 'p'))
   call assert_true(index(s:Popup(), 'PR #42') >= 0)
@@ -234,7 +234,7 @@ function! s:Run() abort
   let command_count = s:CommandCount()
   call assert_true(Filter(popup_list()[0], 'o'))
   call s:WaitForCommands(command_count + 1)
-  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('pr view .*https://github.com/owner/repo/pull/42.* --web', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
   let $GIT_LINEAGE_TEST_EXIT = '1'
   call assert_true(Filter(popup_list()[0], 'o'))
   call s:WaitForMessage('Could not open the PR')
@@ -258,11 +258,11 @@ function! s:Run() abort
   call s:Git('config branch.main.merge refs/heads/main')
   GitLineage
   call s:Popup()
-  call assert_match('--hostname .*ghe.example.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('--hostname .*ghe.example.com.* --input -', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
   call s:Git('checkout --detach')
   GitLineage
   call s:Popup()
-  call assert_match('--hostname .*github.com.* --input -', readfile($GIT_LINEAGE_TEST_LOG)[-1])
+  call assert_match('--hostname .*github.com.* --input -', substitute(readfile($GIT_LINEAGE_TEST_LOG)[-1], '"', '', 'g'))
   unlet g:git_lineage_show_pr
 
   let Filter = popup_getoptions(popup_list()[0]).filter

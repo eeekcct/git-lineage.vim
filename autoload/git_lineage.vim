@@ -1,5 +1,7 @@
 vim9script
 
+import './git_lineage/command.vim' as command
+
 var popup_id = 0
 var browser_jobs: list<job> = []
 
@@ -26,18 +28,6 @@ def CommandClosed(context: dict<any>, channel: channel)
   FinishCommand(context)
 enddef
 
-def PrepareCommand(arguments: list<string>): any
-  var command_arguments = copy(arguments)
-  var executable_path = exepath(command_arguments[0])
-  if has('win32') && executable_path =~? '\.\%(cmd\|bat\)$'
-    return [&shell, &shellcmdflag, join(arguments, ' ')]
-  endif
-  if !empty(executable_path)
-    command_arguments[0] = executable_path
-  endif
-  return command_arguments
-enddef
-
 def StartCommand(arguments: list<string>, input: string, Callback: func): job
   var context: dict<any> = {
     stdout: [],
@@ -47,7 +37,9 @@ def StartCommand(arguments: list<string>, input: string, Callback: func): job
     finished: false,
     callback: Callback,
   }
-  var command_job = job_start(PrepareCommand(arguments), {
+  var prepared = command.Prepare(arguments)
+  var command_job = job_start(prepared.command, {
+    env: prepared.env,
     in_io: empty(input) ? 'null' : 'pipe',
     out_io: 'pipe',
     err_io: 'null',
@@ -80,8 +72,12 @@ def UpdatePopup(state: dict<any>)
 enddef
 
 def StartStateCommand(state: dict<any>, arguments: list<string>, input: string, Callback: func)
-  var command_job = StartCommand(arguments, input, Callback)
-  add(state.jobs, command_job)
+  try
+    var command_job = StartCommand(arguments, input, Callback)
+    add(state.jobs, command_job)
+  catch
+    FailState(state, v:exception)
+  endtry
 enddef
 
 def CancelStateJobs(state: dict<any>)
@@ -413,7 +409,15 @@ def BrowserJobExited(browser_job: job, status: number, failure_message: string)
 enddef
 
 def StartBrowserCommand(arguments: list<string>, failure_message: string)
-  var browser_job = job_start(PrepareCommand(arguments), {
+  var prepared: dict<any>
+  try
+    prepared = command.Prepare(arguments)
+  catch
+    Warn(v:exception)
+    return
+  endtry
+  var browser_job = job_start(prepared.command, {
+    env: prepared.env,
     in_io: 'null',
     out_io: 'null',
     err_io: 'null',

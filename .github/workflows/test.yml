@@ -32,8 +32,9 @@ jobs:
       - name: Install native Windows Vim
         shell: pwsh
         run: |
-          choco install vim --yes --no-progress
-          $vim = Get-ChildItem 'C:\Program Files\Vim\vim*\vim.exe' | Select-Object -First 1
+          choco install vim --version=9.2.1229 --yes --no-progress
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $vim = Get-ChildItem 'C:\tools', 'C:\Program Files\Vim' -Filter vim.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           if (-not $vim) { throw 'Native Windows Vim not found' }
           "VIM_EXE=$($vim.FullName)" >> $env:GITHUB_ENV
       - name: Build local argument recorder

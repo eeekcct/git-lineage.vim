@@ -5,6 +5,7 @@ if !has('win32')
   throw 'This regression test requires native Windows Vim'
 endif
 set nomore
+set encoding=utf-8
 var root = fnamemodify(expand('<sfile>:p'), ':h:h')
 var temp = fnamemodify(tempname(), ':p')
 var old_path = $PATH
@@ -28,6 +29,9 @@ def Run(prepared: dict<any>, expected: list<string>)
   while job_status(j) == 'run' && reltimefloat(reltime(start)) < 10
     sleep 10m
   endwhile
+  if job_status(j) == 'run'
+    job_stop(j)
+  endif
   assert_equal('dead', job_status(j))
   assert_equal(0, get(job_info(j), 'exitval', -1))
   assert_true(filereadable($GIT_LINEAGE_TEST_ARGV), 'Recorder ran')

@@ -46,7 +46,7 @@ try
     'x&echo INJECTED>' .. marker, '%PATH%&echo INJECTED>' .. marker]
   for extension in ['cmd', 'bat']
     var wrapper = wrappers .. '/lineage-fixture.' .. extension
-    writefile(['@echo off', 'setlocal DisableDelayedExpansion',
+    writefile(['@echo off',
       '@"%GIT_LINEAGE_TEST_RECORDER%" %*', 'exit /b %errorlevel%'], wrapper)
     # Neither user shell nor shellcmdflag must affect batch execution.
     for shell in [$SystemRoot .. '\System32\cmd.exe', 'powershell.exe']
@@ -61,7 +61,10 @@ try
   Run(command.Prepare(['lineage-fixture'] + args), args)
   assert_false(filereadable(marker))
   # Native executables retain Vim's direct argv path (including literal quotes).
-  Run(command.Prepare([$GIT_LINEAGE_TEST_RECORDER] + args + ['a"b']), args + ['a"b'])
+  # Native Vim's list-command path drops empty arguments; keep its existing
+  # behavior out of the batch regression (which checks empty arguments above).
+  var native_args = filter(copy(args), (_, value) => !empty(value)) + ['a"b']
+  Run(command.Prepare([$GIT_LINEAGE_TEST_RECORDER] + native_args), native_args)
   assert_false(filereadable(marker))
 catch
   add(v:errors, v:exception .. ' at ' .. v:throwpoint)

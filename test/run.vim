@@ -8,6 +8,7 @@ set hidden
 let s:root = fnamemodify(expand('<sfile>:p'), ':h:h')
 execute 'set runtimepath^=' . fnameescape(s:root)
 let s:temp = fnamemodify(tempname(), ':p')
+let s:fixture_root = ''
 let s:old_path = $PATH
 let s:old_cwd = getcwd()
 let s:old_git_config = $GIT_CONFIG_GLOBAL
@@ -84,6 +85,8 @@ endfunction
 function! s:Run() abort
   call mkdir(s:temp . '/repo with spaces/sub dir', 'p')
   call mkdir(s:temp . '/bin', 'p')
+  " Capture the existing directory's expanded path (Windows may expand 8.3 names).
+  let s:fixture_root = substitute(fnamemodify(s:temp, ':p'), '\\', '/', 'g')
   let $GIT_CONFIG_GLOBAL = s:temp . '/empty.gitconfig'
   let $GIT_CONFIG_NOSYSTEM = '1'
   call writefile([], $GIT_CONFIG_GLOBAL)
@@ -387,7 +390,7 @@ finally
   " Only remove the absolute temporary directory created by this test process.
   if isdirectory(s:temp)
     let resolved = substitute(fnamemodify(s:temp, ':p'), '\\', '/', 'g')
-    let expected = substitute(s:temp, '\\', '/', 'g') . '/'
+    let expected = s:fixture_root
     if resolved ==# expected
       call assert_equal(0, delete(s:temp, 'rf'), 'Remove the test fixture')
     else

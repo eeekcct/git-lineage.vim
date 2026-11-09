@@ -1,0 +1,37 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "timezone": "Asia/Tokyo",
+  "packageRules": [
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "pinDigests": true
+    }
+  ],
+  "automerge": false,
+  "labels": [
+    "dependencies"
+  ],
+  "commitMessagePrefix": "chore(deps):",
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 10,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github\\/workflows\\/test\\.yml$/"
+      ],
+      "matchStrings": [
+        "choco install vim --version=(?<currentValue>[0-9.]+)"
+      ],
+      "depNameTemplate": "vim",
+      "datasourceTemplate": "nuget",
+      "registryUrlTemplate": "https://community.chocolatey.org/api/v2/",
+      "versioningTemplate": "nuget"
+    }
+  ]
+}
